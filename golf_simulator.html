@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Golf Ball Physics Simulator</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:          #0f1117;
+      --panel:       #1a1d27;
+      --surface:     #252836;
+      --accent:      #4ade80;
+      --accent-dark: #16a34a;
+      --text:        #f1f5f9;
+      --muted:       #94a3b8;
+      --border:      #334155;
+      --grid:        #1e2d42;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, sans-serif;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    #app { display: flex; height: 100vh; }
+
+    /* ── Left panel ─────────────────────────────── */
+    #controls {
+      width: 292px;
+      min-width: 260px;
+      overflow-y: auto;
+      padding: 16px 14px 20px;
+      background: var(--panel);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    #controls::-webkit-scrollbar { width: 5px; }
+    #controls::-webkit-scrollbar-track { background: transparent; }
+    #controls::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    #controls h1 {
+      font-size: 0.85rem;
+      font-weight: 800;
+      color: var(--accent);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 2px;
+    }
+
+    .section-title {
+      font-size: 0.62rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-top: 4px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+    }
+
+    .input-group { display: flex; flex-direction: column; gap: 4px; }
+
+    .input-group label {
+      font-size: 0.72rem;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+    }
+
+    .input-group label span {
+      font-size: 0.62rem;
+      color: #475569;
+      font-style: italic;
+    }
+
+    .input-row { display: flex; align-items: center; gap: 8px; }
+
+    input[type="range"] {
+      flex: 1;
+      accent-color: var(--accent);
+      height: 4px;
+      cursor: pointer;
+      min-width: 0;
+    }
+
+    input[type="number"] {
+      width: 62px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 4px;
+      padding: 3px 6px;
+      font-size: 0.82rem;
+      text-align: right;
+      -moz-appearance: textfield;
+    }
+    input[type="number"]::-webkit-inner-spin-button,
+    input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; }
+    input[type="number"]:focus {
+      outline: 1px solid var(--accent);
+      border-color: var(--accent);
+    }
+
+    .unit {
+      font-size: 0.7rem;
+      color: #475569;
+      min-width: 26px;
+      text-align: right;
+    }
+
+    #simulate-btn {
+      margin-top: 10px;
+      background: var(--accent);
+      color: #0f1117;
+      border: none;
+      border-radius: 6px;
+      padding: 11px;
+      font-size: 0.88rem;
+      font-weight: 800;
+      cursor: pointer;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      transition: background 0.12s;
+    }
+    #simulate-btn:hover  { background: #22c55e; }
+    #simulate-btn:active { background: var(--accent-dark); }
+
+    /* ── Right panel ────────────────────────────── */
+    #visualization {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 12px;
+      gap: 10px;
+      overflow: hidden;
+      min-width: 0;
+    }
+
+    .canvas-wrapper {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    canvas { display: block; width: 100%; height: 100%; }
+
+    /* ── Stats bar ──────────────────────────────── */
+    #stats-bar {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 9px 0;
+      display: flex;
+      flex-shrink: 0;
+    }
+
+    .stat {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      padding: 0 4px;
+      border-right: 1px solid var(--border);
+    }
+    .stat:last-child { border-right: none; }
+
+    .stat-label {
+      font-size: 0.6rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+    }
+
+    .stat-value {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.02em;
+    }
+
+    .stat-value.dim { color: var(--muted); font-size: 0.85rem; font-weight: 400; }
+  </style>
+</head>
+<body>
+<div id="app">
+  <div id="controls">
+    <h1>Golf Physics Simulator</h1>
+    <!-- inputs injected by JS -->
+    <button id="simulate-btn">&#9654; Simulate</button>
+  </div>
+
+  <div id="visualization">
+    <div class="canvas-wrapper" id="side-wrapper">
+      <canvas id="sideCanvas"></canvas>
+    </div>
+    <div class="canvas-wrapper" id="top-wrapper">
+      <canvas id="topCanvas"></canvas>
+    </div>
+    <div id="stats-bar">
+      <div class="stat"><span class="stat-label">Carry Distance</span><span class="stat-value dim" id="st-carry">—</span></div>
+      <div class="stat"><span class="stat-label">Max Height</span><span class="stat-value dim" id="st-height">—</span></div>
+      <div class="stat"><span class="stat-label">Lateral Drift</span><span class="stat-value dim" id="st-lateral">—</span></div>
+      <div class="stat"><span class="stat-label">Flight Time</span><span class="stat-value dim" id="st-time">—</span></div>
+      <div class="stat"><span class="stat-label">Landing Speed</span><span class="stat-value dim" id="st-speed">—</span></div>
+      <div class="stat"><span class="stat-label">Spin at Land</span><span class="stat-value dim" id="st-spin">—</span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+/* ================================================================
+   CONSTANTS
+   ================================================================ */
+const BALL = Object.freeze({
+  d: 0.04267,
+  m: 0.04593,
+  r: 0.04267 / 2,
+  A: Math.PI * (0.04267 / 2) ** 2,
+  I: (2 / 5) * 0.04593 * (0.04267 / 2) ** 2,
+});
+
+const G        = 9.81;
+const SPIN_TAU = 15.0;   // spin decay time constant (s)
+const K_PREC   = 0.05;   // gyroscopic precession rate (s⁻¹)
+const DT       = 0.001;  // RK4 timestep (s)
+const MAX_STEPS = 60000; // 60 s max
+
+/* ================================================================
+   ATMOSPHERE
+   ================================================================ */
+
+/** Standard atmosphere air density (kg/m³).
+ *  Accounts for altitude (ISA lapse rate) and temperature. */
+function airDensity(alt, tempC) {
+  const T = tempC + 273.15;
+  return 1.225 * (1 - 2.2557e-5 * alt) ** 5.2561 * (288.15 / T);
+}
+
+/** Dynamic viscosity of air (Pa·s) — Sutherland's law. */
+function airViscosity(tempC) {
+  const T = tempC + 273.15;
+  return 1.458e-6 * T ** 1.5 / (T + 110.4);
+}
+
+/* ================================================================
+   AERODYNAMIC COEFFICIENTS
+   ================================================================ */
+
+/** Drag coefficient for a dimpled golf ball.
+ *  Piecewise Re-dependent (transition triggered by dimples) +
+ *  small spin correction. Bearman & Harvey (1976) / Smits (1994). */
+function dragCoeff(Re, S) {
+  let cd;
+  if      (Re < 80000)  cd = 0.50;   // laminar, dimples ineffective
+  else if (Re < 150000) cd = 0.25;   // transition — dimples trigger turbulence
+  else                  cd = 0.24;   // fully turbulent boundary layer
+  return cd + 0.005 * S;             // spin correction
+}
+
+/** Lift coefficient for Magnus effect.
+ *  Saturating model: C_L = 0.54·S / (0.31 + S)  (Smits & Smith 1994).
+ *  S = spin parameter = |ω|·r / |v_rel|. */
+function liftCoeff(S) {
+  return (S < 1e-9) ? 0 : 0.54 * S / (0.31 + S);
+}
+
+/* ================================================================
+   PHYSICS — 9D STATE DERIVATIVES
+   State: [x, y, z,  vx, vy, vz,  ωx, ωy, ωz]
+   ================================================================ */
+function derivatives(state, wind3D, rho, mu) {
+  const [, , , vx, vy, vz, ox, oy, oz] = state;
+
+  // ── Relative velocity (ball – wind) ──────────────────────────
+  const vrx = vx - wind3D.x;
+  const vry = vy - wind3D.y;
+  const vrz = vz - wind3D.z;
+  const vRelSq  = vrx*vrx + vry*vry + vrz*vrz;
+  const vRelMag = Math.sqrt(vRelSq);
+
+  const omegaMag = Math.sqrt(ox*ox + oy*oy + oz*oz);
+
+  // Linear accelerations start with gravity
+  let ax = 0, ay = 0, az = -G;
+
+  if (vRelMag > 0.05) {
+    const Re = rho * vRelMag * BALL.d / mu;
+    const S  = omegaMag > 0.05 ? omegaMag * BALL.r / vRelMag : 0;
+    const CD = dragCoeff(Re, S);
+    const CL = liftCoeff(S);
+
+    const qA     = 0.5 * rho * vRelSq * BALL.A;
+    const invVr  = 1 / vRelMag;
+    const invM   = 1 / BALL.m;
+
+    // ── Drag force: −q·CD·A · v̂_rel ─────────────────────────
+    const fDrag = qA * CD * invVr;
+    ax -= fDrag * vrx * invM;
+    ay -= fDrag * vry * invM;
+    az -= fDrag * vrz * invM;
+
+    // ── Magnus force: q·CL·A · unit(ω × v_rel) ──────────────
+    if (omegaMag > 0.05) {
+      // ω × v_rel
+      const cx = oy * vrz - oz * vry;
+      const cy = oz * vrx - ox * vrz;
+      const cz = ox * vry - oy * vrx;
+      const cMag = Math.sqrt(cx*cx + cy*cy + cz*cz);
+      if (cMag > 1e-12) {
+        const fMag = qA * CL / (cMag * BALL.m);
+        ax += fMag * cx;
+        ay += fMag * cy;
+        az += fMag * cz;
+      }
+    }
+  }
+
+  // ── Spin evolution ────────────────────────────────────────────
+  // (1) Exponential decay: dω/dt_decay = −ω / τ_spin
+  let dox = -ox / SPIN_TAU;
+  let doy = -oy / SPIN_TAU;
+  let doz = -oz / SPIN_TAU;
+
+  // (2) Gyroscopic precession: spin axis slowly tracks velocity direction
+  //     dω/dt_prec = K_PREC · |ω| · (v̂ − (ω̂·v̂)·ω̂)
+  const vMag = Math.sqrt(vx*vx + vy*vy + vz*vz);
+  if (vMag > 0.05 && omegaMag > 0.05) {
+    const vhx = vx / vMag,  vhy = vy / vMag,  vhz = vz / vMag;
+    const ohx = ox / omegaMag, ohy = oy / omegaMag, ohz = oz / omegaMag;
+    const dot = ohx*vhx + ohy*vhy + ohz*vhz;          // ω̂ · v̂
+    const kp  = K_PREC * omegaMag;
+    dox += kp * (vhx - dot * ohx);
+    doy += kp * (vhy - dot * ohy);
+    doz += kp * (vhz - dot * ohz);
+  }
+
+  // derivative order matches state: [dx,dy,dz, dvx,dvy,dvz, dox,doy,doz]
+  return [vx, vy, vz, ax, ay, az, dox, doy, doz];
+}
+
+/* ================================================================
+   RK4 INTEGRATOR
+   ================================================================ */
+function rk4Step(state, wind3D, rho, mu) {
+  const n  = state.length;
+  const dt = DT;
+
+  function add(a, b) {
+    const r = new Float64Array(n);
+    for (let i = 0; i < n; i++) r[i] = a[i] + b[i];
+    return r;
+  }
+  function scl(a, s) {
+    const r = new Float64Array(n);
+    for (let i = 0; i < n; i++) r[i] = a[i] * s;
+    return r;
+  }
+
+  const k1 = derivatives(state,             wind3D, rho, mu);
+  const k2 = derivatives(add(state, scl(k1, dt/2)), wind3D, rho, mu);
+  const k3 = derivatives(add(state, scl(k2, dt/2)), wind3D, rho, mu);
+  const k4 = derivatives(add(state, scl(k3, dt)),   wind3D, rho, mu);
+
+  const out = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    out[i] = state[i] + (dt / 6) * (k1[i] + 2*k2[i] + 2*k3[i] + k4[i]);
+  }
+  return out;
+}
+
+/* ================================================================
+   SIMULATION RUNNER
+   ================================================================ */
+
+/** Build initial state from UI parameters. */
+function buildInitialState(p) {
+  const DEG = Math.PI / 180;
+  const theta = p.launchAngle * DEG;   // elevation
+  const phi   = p.launchDir   * DEG;   // azimuth (+ = right)
+
+  const vx0 = p.ballSpeed * Math.cos(theta) * Math.cos(phi);
+  const vy0 = p.ballSpeed * Math.cos(theta) * Math.sin(phi);
+  const vz0 = p.ballSpeed * Math.sin(theta);
+
+  // Backspin convention: backspin > 0 → ω_y < 0 → upward Magnus lift
+  // Sidespin convention: sidespin > 0 → ω_z > 0 → fade/right Magnus force
+  const wb = p.backspin * (2 * Math.PI / 60);   // rad/s magnitude
+  const ws = p.sidespin * (2 * Math.PI / 60);   // signed rad/s
+
+  const oy_base = -wb;   // -Y axis → creates +Z (up) Magnus for ball in +X
+  const oz_base =  ws;   // +Z axis → creates +Y (right) Magnus for positive sidespin
+
+  // Tilt spin axis around the X (downrange) axis by spinTilt degrees
+  const tilt = p.spinTilt * DEG;
+  const cosT = Math.cos(tilt), sinT = Math.sin(tilt);
+  const ox0 = 0;
+  const oy0 = oy_base * cosT - oz_base * sinT;
+  const oz0 = oy_base * sinT + oz_base * cosT;
+
+  return new Float64Array([0, 0, 0, vx0, vy0, vz0, ox0, oy0, oz0]);
+}
+
+/** Meteorological wind convention: direction = FROM where wind blows,
+ *  0° = headwind (from downrange/+X), clockwise positive. */
+function buildWind(speed, dirDeg) {
+  const r = dirDeg * (Math.PI / 180);
+  return { x: -speed * Math.cos(r), y: -speed * Math.sin(r), z: 0 };
+}
+
+/** Run the full simulation and return trajectory + stats. */
+function runSimulation(p) {
+  const state0 = buildInitialState(p);
+  const wind3D = buildWind(p.windSpeed, p.windDir);
+  const rho    = airDensity(p.altitude, p.temperature);
+  const mu     = airViscosity(p.temperature);
+
+  // Pre-allocate trajectory as a flat array of snapshots (every 10 steps)
+  const traj = [];
+  traj.push(Array.from(state0));
+
+  let state   = state0;
+  let t       = 0;
+  let maxZ    = 0;
+  let steps   = 0;
+
+  while (steps < MAX_STEPS) {
+    state = rk4Step(state, wind3D, rho, mu);
+    t    += DT;
+    steps++;
+
+    if (state[2] > maxZ) maxZ = state[2];
+
+    if (steps % 10 === 0) traj.push(Array.from(state));
+
+    // Ground hit — require at least 0.15 s aloft to skip initial frame
+    if (state[2] < 0 && t > 0.15) break;
+  }
+
+  const last = traj[traj.length - 1];
+  const omegaLand = Math.sqrt(last[6]**2 + last[7]**2 + last[8]**2);
+
+  return {
+    trajectory: traj,
+    stats: {
+      carry:        last[0],
+      maxHeight:    maxZ,
+      lateral:      last[1],
+      flightTime:   t,
+      landingSpeed: Math.sqrt(last[3]**2 + last[4]**2 + last[5]**2),
+      spinAtLand:   omegaLand * 60 / (2 * Math.PI),   // rpm
+    },
+    rho, mu,
+  };
+}
+
+/* ================================================================
+   RENDERER
+   ================================================================ */
+const PAD = { l: 54, r: 18, t: 22, b: 42 };
+
+/** Map a world coordinate to canvas pixel. */
+function w2c(wx, wz, xMin, xMax, zMin, zMax, W, H) {
+  const cx = PAD.l + (wx - xMin) / (xMax - xMin) * (W - PAD.l - PAD.r);
+  const cy = (H - PAD.b) - (wz - zMin) / (zMax - zMin) * (H - PAD.t - PAD.b);
+  return [cx, cy];
+}
+
+/** Nice round step for a given data range / desired tick count. */
+function niceStep(range, ticks) {
+  const raw  = range / ticks;
+  const mag  = 10 ** Math.floor(Math.log10(raw));
+  const norm = raw / mag;
+  const nice = norm < 1.5 ? 1 : norm < 3.5 ? 2 : norm < 7.5 ? 5 : 10;
+  return nice * mag;
+}
+
+/** Compute axis ranges from trajectory. */
+function computeRanges(traj) {
+  let xMax = 1, zMax = 1, yAbs = 5;
+  for (const s of traj) {
+    if (s[0] > xMax)         xMax = s[0];
+    if (s[2] > zMax)         zMax = s[2];
+    if (Math.abs(s[1]) > yAbs) yAbs = Math.abs(s[1]);
+  }
+  const xR = Math.ceil(xMax / 10) * 10 + 10;
+  const zR = Math.ceil(zMax / 5)  *  5 +  5;
+  const yR = Math.ceil(yAbs / 5)  *  5 +  5;
+  return { xMin: 0, xMax: xR, zMin: 0, zMax: zR, yMin: -yR, yMax: yR };
+}
+
+/** Draw grid lines, axes, tick labels, ground/center line. */
+function drawGrid(ctx, W, H, xMin, xMax, zMin, zMax, xLabel, zLabel, isTop) {
+  const dw = W - PAD.l - PAD.r;
+  const dh = H - PAD.t - PAD.b;
+
+  ctx.save();
+
+  // Grid lines
+  const xStep = niceStep(xMax - xMin, 7);
+  const zStep = niceStep(zMax - zMin, 5);
+
+  ctx.strokeStyle = '#1c2b3e';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([3, 3]);
+  ctx.font = '10px system-ui';
+
+  // Vertical (X) grid
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#4a5e78';
+  for (let xw = 0; xw <= xMax; xw += xStep) {
+    const [cx] = w2c(xw, zMin, xMin, xMax, zMin, zMax, W, H);
+    ctx.beginPath(); ctx.moveTo(cx, PAD.t); ctx.lineTo(cx, H - PAD.b); ctx.stroke();
+    ctx.fillText(xw.toFixed(0), cx, H - PAD.b + 13);
+  }
+
+  // Horizontal (Z/Y) grid
+  ctx.textAlign = 'right';
+  for (let zw = zMin; zw <= zMax + 0.01; zw += zStep) {
+    const [, cy] = w2c(xMin, zw, xMin, xMax, zMin, zMax, W, H);
+    ctx.beginPath(); ctx.moveTo(PAD.l, cy); ctx.lineTo(W - PAD.r, cy); ctx.stroke();
+    ctx.fillText(zw.toFixed(0), PAD.l - 5, cy + 3);
+  }
+  ctx.setLineDash([]);
+
+  // Ground / center reference line
+  const [, cyRef] = w2c(xMin, 0, xMin, xMax, zMin, zMax, W, H);
+  ctx.strokeStyle = isTop ? '#16a34a' : '#16a34a';
+  ctx.lineWidth   = isTop ? 1 : 2;
+  if (isTop) ctx.setLineDash([6, 5]);
+  ctx.beginPath(); ctx.moveTo(PAD.l, cyRef); ctx.lineTo(W - PAD.r, cyRef); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Axis box
+  ctx.strokeStyle = '#2d3e52';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(PAD.l, PAD.t, dw, dh);
+
+  // Axis titles
+  ctx.fillStyle = '#64748b';
+  ctx.font = '11px system-ui';
+  ctx.textAlign = 'center';
+  ctx.fillText(xLabel, PAD.l + dw / 2, H - PAD.b + 29);
+
+  ctx.save();
+  ctx.translate(11, PAD.t + dh / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillText(zLabel, 0, 0);
+  ctx.restore();
+
+  ctx.restore();
+}
+
+/** Draw trajectory as a color-gradient polyline (yellow → orange → red). */
+function drawTrajectoryGradient(ctx, traj, xMin, xMax, zMin, zMax, W, H, useY) {
+  if (traj.length < 2) return;
+  ctx.save();
+  ctx.lineWidth = 2.5;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  const n = traj.length - 1;
+  for (let i = 1; i <= n; i++) {
+    const t  = i / n;
+    const hue = 50 - 50 * t;                 // 50° (gold) → 0° (red)
+    const lit = 62 - 12 * t;
+    ctx.strokeStyle = `hsl(${hue.toFixed(0)},95%,${lit.toFixed(0)}%)`;
+
+    const prev = traj[i - 1], curr = traj[i];
+    const pz   = useY ? prev[1] : prev[2];
+    const cz   = useY ? curr[1] : curr[2];
+    const [px, py] = w2c(prev[0], pz, xMin, xMax, zMin, zMax, W, H);
+    const [qx, qy] = w2c(curr[0], cz, xMin, xMax, zMin, zMax, W, H);
+
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.lineTo(qx, qy);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** Draw launch/apex/landing markers and optional labels. */
+function drawMarkers(ctx, traj, xMin, xMax, zMin, zMax, W, H, useY, showApex) {
+  if (!traj.length) return;
+  ctx.save();
+
+  const last = traj[traj.length - 1];
+
+  // ── Launch dot ──────────────────────────────────────────────
+  const [lx, ly] = w2c(0, 0, xMin, xMax, zMin, zMax, W, H);
+  ctx.fillStyle = '#4ade80';
+  ctx.beginPath(); ctx.arc(lx, ly, 4.5, 0, Math.PI * 2); ctx.fill();
+
+  // ── Apex (side view only) ────────────────────────────────────
+  if (showApex) {
+    let apexIdx = 0, apexZ = 0;
+    for (let i = 0; i < traj.length; i++) {
+      if (traj[i][2] > apexZ) { apexZ = traj[i][2]; apexIdx = i; }
+    }
+    const ap = traj[apexIdx];
+    const [ax, ay]     = w2c(ap[0], apexZ, xMin, xMax, zMin, zMax, W, H);
+    const [, groundY]  = w2c(ap[0], 0,     xMin, xMax, zMin, zMax, W, H);
+
+    // Dotted drop line
+    ctx.strokeStyle = 'rgba(250,204,21,0.4)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 4]);
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(ax, groundY); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Diamond
+    ctx.fillStyle = '#facc15';
+    ctx.beginPath();
+    ctx.moveTo(ax,     ay - 6);
+    ctx.lineTo(ax + 5, ay);
+    ctx.lineTo(ax,     ay + 6);
+    ctx.lineTo(ax - 5, ay);
+    ctx.closePath();
+    ctx.fill();
+
+    // Height label
+    ctx.fillStyle = '#facc15';
+    ctx.font = '9px system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText(apexZ.toFixed(1) + 'm', ax, ay - 9);
+  }
+
+  // ── Landing X ───────────────────────────────────────────────
+  const landZ = useY ? last[1] : 0;   // side view: land on ground; top: actual Y
+  const [dx, dy] = w2c(last[0], landZ, xMin, xMax, zMin, zMax, W, H);
+  ctx.strokeStyle = '#ef4444';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(dx - 5, dy - 5); ctx.lineTo(dx + 5, dy + 5);
+  ctx.moveTo(dx + 5, dy - 5); ctx.lineTo(dx - 5, dy + 5);
+  ctx.stroke();
+
+  // Landing distance label
+  ctx.fillStyle = '#ef4444';
+  ctx.font = '9px system-ui';
+  ctx.textAlign = 'left';
+  ctx.fillText(last[0].toFixed(0) + 'm', dx + 8, dy + 4);
+
+  ctx.restore();
+}
+
+/** Draw a view-title badge (SIDE VIEW / TOP VIEW). */
+function drawBadge(ctx, label) {
+  ctx.save();
+  ctx.fillStyle = 'rgba(74,222,128,0.12)';
+  ctx.strokeStyle = 'rgba(74,222,128,0.25)';
+  ctx.lineWidth = 1;
+  const bw = 76, bh = 18;
+  roundRect(ctx, PAD.l + 6, PAD.t + 5, bw, bh, 4);
+  ctx.fill(); ctx.stroke();
+
+  ctx.fillStyle = '#4ade80';
+  ctx.font = '700 9px system-ui';
+  ctx.textAlign = 'center';
+  ctx.letterSpacing = '0.08em';
+  ctx.fillText(label, PAD.l + 6 + bw / 2, PAD.t + 5 + 12.5);
+  ctx.restore();
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);  ctx.arcTo(x + w, y,     x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r); ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h);  ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r);      ctx.arcTo(x, y, x + r, y, r);
+  ctx.closePath();
+}
+
+/** Resize canvas to wrapper's physical pixels (handles HiDPI). */
+function resizeCanvas(canvas, wrapper) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.round(wrapper.clientWidth  * dpr);
+  const h = Math.round(wrapper.clientHeight * dpr);
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width  = w;
+    canvas.height = h;
+  }
+}
+
+/** Render one view (side or top). */
+function renderView(canvas, traj, isTop) {
+  if (!traj || traj.length < 2) return;
+
+  const dpr = window.devicePixelRatio || 1;
+  const W   = canvas.width  / dpr;
+  const H   = canvas.height / dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  // Background
+  ctx.fillStyle = '#131722';
+  ctx.fillRect(0, 0, W, H);
+
+  const rng = computeRanges(traj);
+  const { xMin, xMax } = rng;
+  const zMin = isTop ? rng.yMin : rng.zMin;
+  const zMax = isTop ? rng.yMax : rng.zMax;
+  const xLbl = 'Distance (m)';
+  const zLbl = isTop ? 'Lateral (m)' : 'Height (m)';
+
+  drawGrid(ctx, W, H, xMin, xMax, zMin, zMax, xLbl, zLbl, isTop);
+  drawTrajectoryGradient(ctx, traj, xMin, xMax, zMin, zMax, W, H, isTop);
+  drawMarkers(ctx, traj, xMin, xMax, zMin, zMax, W, H, isTop, !isTop);
+  drawBadge(ctx, isTop ? 'TOP VIEW' : 'SIDE VIEW');
+}
+
+/* ================================================================
+   UI CONTROLLER
+   ================================================================ */
+const INPUT_DEFS = [
+  // id, label, hint, unit, min, max, step, default
+  ['ballSpeed',   'Ball Speed',         '',                  'm/s', 10,    100,   1,    70   ],
+  ['launchAngle', 'Launch Angle',       '',                  'deg',  0,     45,   0.5,  12   ],
+  ['launchDir',   'Launch Direction',   '+ = right',         'deg',-30,     30,   0.5,   0   ],
+  ['backspin',    'Backspin',           '',                  'rpm',  0,   8000,  50,  3000  ],
+  ['sidespin',    'Sidespin',           '+ = fade',          'rpm',-3000, 3000,  50,     0   ],
+  ['spinTilt',    'Spin Axis Tilt',     '+ = tilt fwd',      'deg',-45,    45,   1,      0   ],
+  ['windSpeed',   'Wind Speed',         '',                  'm/s',  0,    20,   0.5,   0   ],
+  ['windDir',     'Wind Direction',     '0° = headwind',     'deg',  0,   360,   5,     0   ],
+  ['altitude',    'Altitude',           '',                  'm',    0,  3000,  10,     0   ],
+  ['temperature', 'Temperature',        '',                  '°C', -10,    45,   1,    20   ],
+];
+
+const SECTIONS = { ballSpeed: 'Launch Conditions', windSpeed: 'Environment' };
+
+function buildControls() {
+  const panel = document.getElementById('controls');
+  const btn   = document.getElementById('simulate-btn');
+
+  for (const [id, label, hint, unit, min, max, step, def] of INPUT_DEFS) {
+    if (SECTIONS[id]) {
+      const sec = document.createElement('div');
+      sec.className = 'section-title';
+      sec.textContent = SECTIONS[id];
+      panel.insertBefore(sec, btn);
+    }
+
+    const grp = document.createElement('div');
+    grp.className = 'input-group';
+    const hintHtml = hint
+      ? `<span>${hint}</span>`
+      : '';
+    grp.innerHTML = `
+      <label for="${id}">${label}${hintHtml}</label>
+      <div class="input-row">
+        <input type="range"  id="${id}-r" min="${min}" max="${max}" step="${step}" value="${def}">
+        <input type="number" id="${id}"   min="${min}" max="${max}" step="${step}" value="${def}">
+        <span class="unit">${unit}</span>
+      </div>`;
+    panel.insertBefore(grp, btn);
+  }
+}
+
+function wireInputs() {
+  for (const [id, , , , min, max] of INPUT_DEFS) {
+    const num = document.getElementById(id);
+    const rng = document.getElementById(id + '-r');
+    rng.addEventListener('input', () => { num.value = rng.value; });
+    num.addEventListener('input', () => {
+      const v = Math.max(min, Math.min(max, parseFloat(num.value) || 0));
+      num.value = v;
+      rng.value = v;
+    });
+  }
+}
+
+function getParams() {
+  const p = {};
+  for (const [id] of INPUT_DEFS) p[id] = parseFloat(document.getElementById(id).value);
+  return p;
+}
+
+function updateStats(stats) {
+  const fmt = (v, dec, unit) => v.toFixed(dec) + ' ' + unit;
+  const sign = stats.lateral > 0 ? '+' : '';
+
+  document.getElementById('st-carry').textContent   = fmt(stats.carry,        1, 'm');
+  document.getElementById('st-height').textContent  = fmt(stats.maxHeight,    1, 'm');
+  document.getElementById('st-lateral').textContent = sign + fmt(stats.lateral, 1, 'm');
+  document.getElementById('st-time').textContent    = fmt(stats.flightTime,   2, 's');
+  document.getElementById('st-speed').textContent   = fmt(stats.landingSpeed, 1, 'm/s');
+  document.getElementById('st-spin').textContent    = fmt(stats.spinAtLand,   0, 'rpm');
+
+  for (const id of ['st-carry','st-height','st-lateral','st-time','st-speed','st-spin']) {
+    document.getElementById(id).classList.remove('dim');
+  }
+}
+
+let lastTraj = null;
+const sideCanvas = document.getElementById('sideCanvas');
+const topCanvas  = document.getElementById('topCanvas');
+const sideWrap   = document.getElementById('side-wrapper');
+const topWrap    = document.getElementById('top-wrapper');
+
+function redraw() {
+  if (!lastTraj) return;
+  resizeCanvas(sideCanvas, sideWrap);
+  resizeCanvas(topCanvas,  topWrap);
+  renderView(sideCanvas, lastTraj, false);
+  renderView(topCanvas,  lastTraj, true);
+}
+
+function handleSimulate() {
+  const result = runSimulation(getParams());
+  lastTraj = result.trajectory;
+  redraw();
+  updateStats(result.stats);
+}
+
+function init() {
+  buildControls();
+  wireInputs();
+  document.getElementById('simulate-btn').addEventListener('click', handleSimulate);
+
+  const ro = new ResizeObserver(redraw);
+  ro.observe(sideWrap);
+  ro.observe(topWrap);
+
+  handleSimulate();
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
