@@ -30,27 +30,7 @@
       </header>
 
       <aside id="controls" aria-label="Shot settings">
-        <section class="library" aria-label="Your shots">
-          <h2 class="section-head first">Your shots</h2>
-          <p class="library-name" id="library-name">No export loaded yet.</p>
-          <label class="field">
-            <span>Club</span>
-            <select id="data-club"></select>
-          </label>
-          <label class="field">
-            <span>Shot</span>
-            <select id="data-shot"></select>
-          </label>
-          <div class="shot-nav">
-            <button type="button" id="prev-shot">Previous</button>
-            <button type="button" id="next-shot">Next</button>
-          </div>
-          <label class="file-button">
-            Load an Awesome Golf or Garmin CSV
-            <input type="file" id="data-file" accept=".csv,text/csv" />
-          </label>
-          <p class="library-error" id="library-error" hidden></p>
-        </section>
+        <section class="library" id="library" aria-label="Your shots"></section>
         <h2 class="section-head">Shot</h2>
         <label class="field">
           <span>Tour average</span>
@@ -61,6 +41,8 @@
           <select id="surface"></select>
         </label>
         <div id="params"></div>
+        <button type="button" id="find-ace" class="wide-button">Find a hole-in-one</button>
+        <p class="library-name" id="ace-status" aria-live="polite"></p>
       </aside>
 
       <main id="vis">
@@ -79,6 +61,8 @@
               <div class="cameras" role="group" aria-label="Playback and layers">
                 <button type="button" id="layer-forces" aria-pressed="true">Forces</button>
                 <button type="button" id="layer-ghost" aria-pressed="true">Standard</button>
+                <button type="button" id="layer-tour" aria-pressed="true">Tour</button>
+                <button type="button" id="layer-trails" aria-pressed="false">Trails</button>
                 <label class="speed">
                   <span class="visually-hidden">Playback speed</span>
                   <select id="speed">
@@ -94,6 +78,7 @@
             </div>
           </div>
           <div class="pip" id="pip-legend"></div>
+          <p class="fly-hint">Drag to orbit · W A S D to fly · Q / E down and up · Shift for speed</p>
         </section>
 
         <div class="charts">
@@ -116,6 +101,7 @@
         </section>
       </main>
     </div>
+    <dialog id="shot-dialog" class="shot-dialog" aria-label="Review your shots"></dialog>
     <script type="module" src="/src/app/main.ts"></script>
   </body>
 </html>

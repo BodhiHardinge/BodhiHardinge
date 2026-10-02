@@ -19,6 +19,10 @@ export interface SceneInput {
   readonly shot: Shot;
   /** The same shot in standard conditions, drawn as a ghost; null when conditions are standard. */
   readonly ghost: Shot | null;
+  /** The Tour average for the same club, flown in the same conditions; null when there is none. */
+  readonly tour: Shot | null;
+  /** Other recorded shots to show as faint trails. */
+  readonly trails: readonly Shot[];
   readonly hole: HoleLayout;
   readonly swing: Swing;
   readonly club: ClubSpec;
@@ -32,6 +36,8 @@ const BALL_RADIUS = TOUR_BALL.diameter / 2;
 const TRACER_RADIUS = 0.2;
 const SAMPLE_STEP = 1 / 60;
 const IMPULSE_WINDOW = 0.15;
+const DROP_TIME = 0.35;
+const CUP_DEPTH = 0.1;
 
 const toThree = (p: Vec3) => new THREE.Vector3(p.x, p.y, p.z);
 
@@ -82,6 +88,9 @@ export class CourseView {
   private dispersion: THREE.InstancedMesh | null = null;
   private tracer: Tracer | null = null;
   private ghostTracer: Tracer | null = null;
+  private tourTracer: Tracer | null = null;
+  private readonly trailGroup = new THREE.Group();
+  private readonly keys = new Set<string>();
 
   private input: SceneInput | null = null;
   private context: FlightContext | null = null;
@@ -97,18 +106,20 @@ export class CourseView {
   private phase = '';
   private showForces = true;
   private showGhost = true;
+  private showTour = true;
+  private showTrails = false;
   private readonly followFrom = new THREE.Vector3();
 
   constructor(canvas: HTMLCanvasElement, container: HTMLElement, legend: HTMLElement) {
     this.container = container;
     this.legend = legend;
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, logarithmicDepthBuffer: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
 
     buildRange(this.scene);
-    this.scene.add(this.markers, this.golfer.group);
+    this.scene.add(this.markers, this.golfer.group, this.trailGroup);
 
     this.ball = new THREE.Mesh(
       new THREE.SphereGeometry(BALL_RADIUS, 24, 16),
@@ -151,6 +162,46 @@ export class CourseView {
 
     new ResizeObserver(() => this.resize()).observe(container);
     this.resize();
+    this.listenForFlying();
+  }
+
+  // W/A/S/D fly like a game camera: forward and back along the view, strafe left and right; Q/E sink and rise.
+  private listenForFlying(): void {
+    const typing = (target: EventTarget | null) => target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement;
+    const flyKeys = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'ShiftLeft', 'ShiftRight']);
+    window.addEventListener('keydown', (event) => {
+      if (typing(event.target) || !flyKeys.has(event.code) || document.querySelector('dialog[open]')) return;
+      if (event.code.startsWith('Key')) event.preventDefault();
+      this.keys.add(event.code);
+      if (this.mode !== 'free' && event.code.startsWith('Key')) {
+        this.mode = 'free';
+        this.onCameraChange('free');
+      }
+      this.lastFrame = performance.now();
+      this.requestRender();
+    });
+    window.addEventListener('keyup', (event) => this.keys.delete(event.code));
+    window.addEventListener('blur', () => this.keys.clear());
+  }
+
+  private fly(dt: number): void {
+    const forward = new THREE.Vector3();
+    this.camera.getWorldDirection(forward);
+    const right = new THREE.Vector3().crossVectors(forward, this.camera.up).normalize();
+    const move = new THREE.Vector3();
+    if (this.keys.has('KeyW')) move.add(forward);
+    if (this.keys.has('KeyS')) move.sub(forward);
+    if (this.keys.has('KeyD')) move.add(right);
+    if (this.keys.has('KeyA')) move.sub(right);
+    if (this.keys.has('KeyE')) move.y += 1;
+    if (this.keys.has('KeyQ')) move.y -= 1;
+    if (move.lengthSq() === 0) return;
+    const fast = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
+    move.normalize().multiplyScalar((fast ? 60 : 15) * dt);
+    if (this.camera.position.y + move.y < 0.3) move.y = 0.3 - this.camera.position.y;
+    this.camera.position.add(move);
+    this.controls.target.add(move);
+    this.controls.update();
   }
 
   /** Shows a new shot at rest. Call hit() to play the swing and flight. */
@@ -175,20 +226,28 @@ export class CourseView {
     }
     this.golfer.setClub(input.club);
     this.tracer = this.replaceTracer(this.tracer, input.shot, '#f4d35e', 1);
-    this.ghostTracer = input.ghost ? this.replaceTracer(this.ghostTracer, input.ghost, '#ffffff', 0.55) : this.replaceTracer(this.ghostTracer, null, '', 0);
+    this.ghostTracer = this.replaceTracer(this.ghostTracer, input.ghost, '#ffffff', 0.55);
+    this.tourTracer = this.replaceTracer(this.tourTracer, input.tour, '#3d6fd1', 0.85);
+    this.buildTrails(input.trails);
     this.buildDispersion(input.dispersion);
     this.landing.position.set(input.shot.flight.landingPosition.x, 0.03, input.shot.flight.landingPosition.z);
     this.playing = false;
-    this.clock = input.shot.duration;
+    this.clock = this.endTime();
     this.showAt(this.clock, 0);
     this.frameCamera(true);
+  }
+
+  // A holed ball gets a moment to drop to the bottom of the cup.
+  private endTime(): number {
+    const shot = this.input!.shot;
+    return shot.duration + (shot.holed ? DROP_TIME : 0);
   }
 
   /** Plays the swing, strike, flight, bounces and roll from address. */
   hit(): void {
     if (!this.input) return;
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      this.showAt(this.input.shot.duration, 0);
+      this.showAt(this.endTime(), 0);
       return;
     }
     this.playing = true;
@@ -208,9 +267,12 @@ export class CourseView {
     this.frameCamera(true);
   }
 
-  setLayers(forces: boolean, ghost: boolean): void {
+  setLayers(forces: boolean, ghost: boolean, tour: boolean, trails: boolean): void {
     this.showForces = forces;
     this.showGhost = ghost;
+    this.showTour = tour;
+    this.showTrails = trails;
+    this.trailGroup.visible = trails;
     this.legend.hidden = !forces;
     this.showAt(this.clock, 0);
   }
@@ -230,16 +292,21 @@ export class CourseView {
 
   private tick(now: number): void {
     this.frame = 0;
+    if (this.keys.size > 0) {
+      this.fly(Math.min(0.1, (now - this.lastFrame) / 1000));
+      if (!this.playing) this.lastFrame = now;
+    }
     if (this.playing && this.input) {
       const dt = Math.min(0.1, (now - this.lastFrame) / 1000) * this.speed;
       this.lastFrame = now;
-      this.clock = Math.min(this.input.shot.duration, this.clock + dt);
-      if (this.clock >= this.input.shot.duration) this.playing = false;
+      const end = this.endTime();
+      this.clock = Math.min(end, this.clock + dt);
+      if (this.clock >= end) this.playing = false;
       this.showAt(this.clock, dt);
       if (this.mode === 'follow') this.frameCamera(false);
     }
     this.draw();
-    if (this.playing) this.requestRender();
+    if (this.playing || this.keys.size > 0) this.requestRender();
   }
 
   private draw(): void {
@@ -321,6 +388,23 @@ export class CourseView {
     tracer.ground.geometry.setDrawRange(0, Math.max(0, index - tracer.flightSamples + 1));
   }
 
+  private buildTrails(shots: readonly Shot[]): void {
+    for (const child of [...this.trailGroup.children]) {
+      this.trailGroup.remove(child);
+      (child as THREE.Line).geometry.dispose();
+    }
+    const material = new THREE.LineBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.35 });
+    for (const shot of shots) {
+      const points: THREE.Vector3[] = [];
+      for (let t = 0; t <= shot.duration; t += 0.05) {
+        const p = shot.positionAt(t);
+        points.push(new THREE.Vector3(p.x, Math.max(p.y, 0) + 0.05, p.z));
+      }
+      this.trailGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), material));
+    }
+    this.trailGroup.visible = this.showTrails;
+  }
+
   private buildDispersion(points: SceneInput['dispersion']): void {
     if (this.dispersion) {
       this.scene.remove(this.dispersion);
@@ -343,13 +427,14 @@ export class CourseView {
     const { shot, swing } = input;
     this.golfer.update(swing.poseAt(Math.min(Math.max(t, swing.start), swing.end)));
 
-    const p = t < 0 ? vec3(0, 0, 0) : shot.positionAt(t);
-    const sunk = shot.holed && t >= shot.duration;
-    this.ball.position.set(p.x, sunk ? -0.03 : p.y + BALL_RADIUS, p.z);
+    const p = t < 0 ? vec3(0, 0, 0) : shot.positionAt(Math.min(t, shot.duration));
+    const drop = shot.holed ? Math.min(1, Math.max(0, (t - shot.duration) / DROP_TIME)) : 0;
+    this.ball.position.set(p.x, p.y + BALL_RADIUS - drop * drop * (CUP_DEPTH - BALL_RADIUS), p.z);
     this.locator.position.copy(this.ball.position);
-    this.locator.visible = !sunk;
+    this.locator.visible = drop < 1;
     this.revealTracer(this.tracer, t, true);
     this.revealTracer(this.ghostTracer, t, this.showGhost);
+    this.revealTracer(this.tourTracer, t, this.showTour);
     this.landing.visible = shot.flight.landed && t >= shot.flight.flightTime;
 
     this.setPhase(this.phaseAt(t));
@@ -364,7 +449,7 @@ export class CourseView {
 
   private phaseAt(t: number): string {
     const { shot, swing } = this.input!;
-    if (t >= shot.duration) return shot.holed ? 'Holed!' : this.playing ? 'Rolling' : 'At rest';
+    if (t >= shot.duration) return shot.holed ? 'Holed!' : 'At rest';
     if (t < swing.start + 0.6) return 'Address';
     if (t < -swing.downswing) return 'Backswing';
     if (t < 0) return 'Downswing';
@@ -470,8 +555,8 @@ export class CourseView {
         target.set(reach * 0.5, apex * 0.3, 0);
         break;
       case 'above':
-        position.set(reach * 0.5 - reach * 0.22, reach * 0.95, rest.z * 0.5);
-        target.set(reach * 0.5, 0, rest.z * 0.5);
+        position.set(reach * 0.58 - reach * 0.25, reach * 1.05, rest.z * 0.5);
+        target.set(reach * 0.58, 0, rest.z * 0.5);
         break;
       case 'follow': {
         const ball = this.ball.position;

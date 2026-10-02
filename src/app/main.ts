@@ -1,16 +1,19 @@
 import './style.css';
+import { findHoleOut } from '../analysis/aim.ts';
 import { launchOf } from '../analysis/compare.ts';
 import { PGA_TOUR_AVERAGES, type ReferenceShot } from '../analysis/reference-data.ts';
 import type { ShotRecord } from '../analysis/shots.ts';
+import { referenceLaunch } from '../analysis/validate.ts';
 import { clubFor, estimateDelivery } from '../physics/club.ts';
-import { simulateShot, SURFACES, type SurfaceKey } from '../physics/ground.ts';
+import { simulateShot, SURFACES, type Shot, type ShotOptions, type SurfaceKey } from '../physics/ground.ts';
 import { makeHole } from '../physics/hole.ts';
 import { Swing } from '../physics/swing.ts';
 import { yards } from '../physics/units.ts';
 import { FlightChart } from './charts.ts';
 import { ControlPanel } from './controls.ts';
 import { CourseView, type CameraMode } from './course.ts';
-import { bundledLibrary, clubsIn, landingSpots, measuredValues, readLibrary, typicalShot, type ShotLibrary } from './data.ts';
+import { bundledLibrary, landingSpots, measuredValues } from './data.ts';
+import { LibraryPanel } from './library.ts';
 import { Leaderboard, type BoardRow } from './readout.ts';
 import {
   DEFAULT_SETTINGS, isStandardWeather, LAUNCH_KEYS, settingsFromReference, STANDARD_SETTINGS, toEnvironment, toLaunch, type ShotSettings,
@@ -18,6 +21,7 @@ import {
 import { unitFor, type UnitSystem } from './units.ts';
 
 const UNITS_KEY = 'ballflight.units';
+const MAX_TRAILS = 40;
 
 function element<T extends HTMLElement>(selector: string): T {
   const found = document.querySelector<T>(selector);
@@ -36,32 +40,44 @@ function savedUnits(): UnitSystem {
 /** Where the current launch numbers came from. */
 type Source =
   | { kind: 'tour'; shot: ReferenceShot }
-  | { kind: 'data'; club: string; shot: ShotRecord; typical: boolean }
+  | { kind: 'data'; shot: ShotRecord; typical: boolean }
   | { kind: 'custom' };
+
+const normaliseClub = (name: string) =>
+  name.toLowerCase().replace(/-/g, ' ').replace(/^pw$/, 'pitching wedge').replace(/^hybrid$/, '3 hybrid').trim();
+
+/** The Tour average for a club name such as "7 Iron", if the Tour tables have one. */
+function tourFor(club: string | null): ReferenceShot | null {
+  if (!club) return null;
+  return PGA_TOUR_AVERAGES.find((r) => normaliseClub(r.club) === normaliseClub(club)) ?? null;
+}
 
 const settings: ShotSettings = { ...DEFAULT_SETTINGS };
 let system = savedUnits();
 let surface: SurfaceKey | 'hole' = 'hole';
 let source: Source = { kind: 'tour', shot: PGA_TOUR_AVERAGES[0] };
-let library: ShotLibrary | null = bundledLibrary();
 let hitNext = true;
+let lastRender: () => void = () => {};
 
 const sideView = new FlightChart(element<HTMLCanvasElement>('#side-cv'), 'side');
 const topView = new FlightChart(element<HTMLCanvasElement>('#top-cv'), 'top');
 const board = new Leaderboard(element<HTMLTableElement>('#board'));
 const boardSub = element('#board-sub');
 const course = new CourseView(element<HTMLCanvasElement>('#course-cv'), element('.course'), element('#pip-legend'));
+const library = new LibraryPanel(element('#library'), element<HTMLDialogElement>('#shot-dialog'), bundledLibrary());
 const presetSelect = element<HTMLSelectElement>('#preset');
 const surfaceSelect = element<HTMLSelectElement>('#surface');
-const clubSelect = element<HTMLSelectElement>('#data-club');
-const shotSelect = element<HTMLSelectElement>('#data-shot');
-const libraryName = element('#library-name');
-const libraryError = element('#library-error');
 const unitButtons = document.querySelectorAll<HTMLButtonElement>('[data-units]');
 const cameraButtons = document.querySelectorAll<HTMLButtonElement>('[data-camera]');
-const forcesButton = element<HTMLButtonElement>('#layer-forces');
-const ghostButton = element<HTMLButtonElement>('#layer-ghost');
+const layerButtons = {
+  forces: element<HTMLButtonElement>('#layer-forces'),
+  ghost: element<HTMLButtonElement>('#layer-ghost'),
+  tour: element<HTMLButtonElement>('#layer-tour'),
+  trails: element<HTMLButtonElement>('#layer-trails'),
+};
+const layerOn = (name: keyof typeof layerButtons) => layerButtons[name].getAttribute('aria-pressed') === 'true';
 const phaseLabel = element('#course-phase');
+const aceStatus = element('#ace-status');
 
 course.onPhase = (phase) => {
   phaseLabel.textContent = phase;
@@ -74,34 +90,45 @@ function scheduleUpdate(hit = false): void {
   if (frame === 0) frame = requestAnimationFrame(update);
 }
 
-function dataShots(club: string): ShotRecord[] {
-  return library ? library.shots.filter((s) => s.club === club) : [];
+function shotOptions(): ShotOptions {
+  const hole = makeHole(settings.pinDistance);
+  return { hole, ...(surface === 'hole' ? {} : { surface: SURFACES[surface] }) };
+}
+
+// Evenly spaced picks keep the trails representative without flying hundreds of shots.
+function sample<T>(items: readonly T[], count: number): T[] {
+  if (items.length <= count) return [...items];
+  return Array.from({ length: count }, (_, i) => items[Math.floor((i * items.length) / count)]);
 }
 
 // Simulating inside the animation frame coalesces a burst of slider events into one run.
 function update(): void {
   frame = 0;
-  const hole = makeHole(settings.pinDistance);
-  const options = { hole, ...(surface === 'hole' ? {} : { surface: SURFACES[surface] }) };
+  const options = shotOptions();
+  const hole = options.hole!;
+  const env = toEnvironment(settings);
   const launch = toLaunch(settings);
-  const shot = simulateShot(launch, toEnvironment(settings), options);
-  const standard = isStandardWeather(settings);
-  const ghost = standard ? null : simulateShot(launch, toEnvironment({ ...settings, ...STANDARD_SETTINGS }), options);
+  const shot = simulateShot(launch, env, options);
+  const ghost = isStandardWeather(settings) ? null : simulateShot(launch, toEnvironment({ ...settings, ...STANDARD_SETTINGS }), options);
 
-  const clubName = source.kind === 'tour' ? source.shot.club : source.kind === 'data' ? source.club : null;
+  const clubName = source.kind === 'tour' ? source.shot.club : source.kind === 'data' ? source.shot.club : null;
+  const tourReference = source.kind === 'tour' ? null : tourFor(clubName);
+  const tour = tourReference ? simulateShot(referenceLaunch(tourReference), env, options) : null;
+
   const spec = clubFor(clubName, launch);
   const measured = source.kind === 'data' ? source.shot : {};
   const swing = new Swing(estimateDelivery(launch, spec, measured), spec);
-  const dispersion = source.kind === 'data' ? landingSpots(dataShots(source.club)) : [];
+  const selected = library.selectedShots();
+  const dispersion = landingSpots(selected);
+  const trails: Shot[] = layerOn('trails') ? sample(selected, MAX_TRAILS).map((s) => simulateShot(launchOf(s), env, options)) : [];
 
   const temperature = unitFor('temperature', system);
   const rows: BoardRow[] = [{ label: 'Your shot', tone: 'shot', shot }];
-  if (ghost) {
-    rows.push({ label: `Calm, ${temperature.fromSI(STANDARD_SETTINGS.temperature).toFixed(0)}${temperature.label}, sea level`, tone: 'ghost', shot: ghost });
-  }
+  if (tour && tourReference) rows.push({ label: `Tour ${tourReference.club}, same conditions`, tone: 'tour', shot: tour });
+  if (ghost) rows.push({ label: `Calm, ${temperature.fromSI(STANDARD_SETTINGS.temperature).toFixed(0)}${temperature.label}, sea level`, tone: 'ghost', shot: ghost });
   if (source.kind === 'tour') {
     rows.push({
-      label: 'Tour average', tone: 'reference',
+      label: 'Tour average (published)', tone: 'reference',
       values: { carry: yards(source.shot.carryYards), apex: yards(source.shot.apexYards), landAngle: (source.shot.landingAngleDeg * Math.PI) / 180 },
     });
   } else if (source.kind === 'data') {
@@ -112,22 +139,26 @@ function update(): void {
   const distance = unitFor('distance', system);
   const surfaceName = surface === 'hole' ? 'The hole' : SURFACES[surface].name;
   const weather = ghost ? ` · Weather ${signed(distance.fromSI(shot.flight.carry - ghost.flight.carry))} ${distance.label} carry` : '';
-  boardSub.textContent = `${surfaceName} · ${temperature.fromSI(settings.temperature).toFixed(0)}${temperature.label}${weather}`;
+  const versusTour = tour ? ` · ${signed(distance.fromSI(shot.flight.carry - tour.flight.carry))} ${distance.label} vs Tour` : '';
+  boardSub.textContent = `${surfaceName} · ${temperature.fromSI(settings.temperature).toFixed(0)}${temperature.label}${weather}${versusTour}`;
 
   const wind = { from: settings.windDirection, speed: settings.windSpeed };
   lastRender = () => {
-    const shownGhost = ghostButton.getAttribute('aria-pressed') === 'true' ? ghost : null;
-    sideView.render(shot, system, wind, { ghost: shownGhost, hole });
-    topView.render(shot, system, wind, { ghost: shownGhost, hole, dispersion });
+    const extras = {
+      ghost: layerOn('ghost') ? ghost : null,
+      tour: layerOn('tour') ? tour : null,
+      trails,
+      hole,
+    };
+    sideView.render(shot, system, wind, extras);
+    topView.render(shot, system, wind, { ...extras, dispersion });
   };
   lastRender();
 
-  course.setScene({ shot, ghost, hole, swing, club: spec, env: toEnvironment(settings), system, dispersion });
+  course.setScene({ shot, ghost, tour, trails, hole, swing, club: spec, env, system, dispersion });
   if (hitNext) course.hit();
   hitNext = false;
 }
-
-let lastRender: () => void = () => {};
 
 function signed(v: number): string {
   return `${v >= 0 ? '+' : ''}${v.toFixed(1)}`;
@@ -137,11 +168,23 @@ const panel = new ControlPanel(element('#params'), settings, (key) => {
   if (source.kind !== 'custom' && LAUNCH_KEYS.includes(key)) {
     source = { kind: 'custom' };
     presetSelect.value = '';
-    clubSelect.value = '';
-    fillShots();
+    library.clearPlayback();
   }
+  aceStatus.textContent = '';
   scheduleUpdate();
 });
+
+library.onSelectionChange = () => scheduleUpdate();
+library.onPlay = (shot, typical) => {
+  source = { kind: 'data', shot, typical };
+  Object.assign(settings, launchOf(shot));
+  const carries = library.keptShotsOf(shot.club).map((s) => s.carry).filter((c): c is number => c !== undefined).sort((a, b) => a - b);
+  if (carries.length) settings.pinDistance = Math.round(carries[carries.length >> 1]);
+  presetSelect.value = '';
+  aceStatus.textContent = '';
+  panel.refresh();
+  scheduleUpdate(true);
+};
 
 function showCamera(mode: CameraMode): void {
   for (const button of cameraButtons) button.setAttribute('aria-pressed', String(button.dataset.camera === mode));
@@ -151,47 +194,13 @@ function applyUnits(next: UnitSystem): void {
   system = next;
   for (const button of unitButtons) button.setAttribute('aria-pressed', String(button.dataset.units === next));
   panel.setUnits(next);
+  library.setUnits(next);
   try {
     localStorage.setItem(UNITS_KEY, next);
   } catch {
     // Storage can be unavailable (private mode); the choice just won't persist.
   }
-  fillShots();
   scheduleUpdate();
-}
-
-function useDataShot(club: string, index: number): void {
-  const shots = dataShots(club);
-  if (shots.length === 0) return;
-  const typical = index < 0;
-  const shot = typical ? typicalShot(shots) : shots[index];
-  source = { kind: 'data', club, shot, typical };
-  Object.assign(settings, launchOf(shot));
-  const carries = shots.map((s) => s.carry).filter((c): c is number => c !== undefined).sort((a, b) => a - b);
-  if (carries.length) settings.pinDistance = Math.round(carries[carries.length >> 1]);
-  presetSelect.value = '';
-  panel.refresh();
-  scheduleUpdate(true);
-}
-
-function fillLibrary(): void {
-  libraryName.textContent = library ? library.name : 'No export loaded yet.';
-  clubSelect.replaceChildren(new Option(library ? 'Choose a club' : 'None', ''));
-  if (library) clubSelect.append(...clubsIn(library).map(({ club, count }) => new Option(`${club} (${count})`, club)));
-  clubSelect.disabled = !library;
-  fillShots();
-}
-
-function fillShots(): void {
-  const club = clubSelect.value;
-  const shots = club ? dataShots(club) : [];
-  const distance = unitFor('distance', system);
-  shotSelect.replaceChildren(new Option(shots.length ? 'Typical (median)' : 'Choose a club first', '-1'));
-  shotSelect.append(
-    ...shots.map((s, i) => new Option(`${s.date.slice(0, 10)} · ${s.carry !== undefined ? distance.fromSI(s.carry).toFixed(0) : '?'} ${distance.label}${s.classification ? ` · ${s.classification}` : ''}`, String(i))),
-  );
-  shotSelect.disabled = shots.length === 0;
-  if (source.kind === 'data' && source.club === club && !source.typical) shotSelect.value = String(shots.indexOf(source.shot));
 }
 
 presetSelect.append(new Option('Custom', ''), ...PGA_TOUR_AVERAGES.map((s, i) => new Option(s.club, String(i))));
@@ -203,8 +212,7 @@ presetSelect.addEventListener('change', () => {
     const shot = PGA_TOUR_AVERAGES[Number(presetSelect.value)];
     source = { kind: 'tour', shot };
     Object.assign(settings, settingsFromReference(shot, settings));
-    clubSelect.value = '';
-    fillShots();
+    library.clearPlayback();
   }
   panel.refresh();
   scheduleUpdate(true);
@@ -217,34 +225,23 @@ surfaceSelect.addEventListener('change', () => {
   scheduleUpdate(true);
 });
 
-clubSelect.addEventListener('change', () => {
-  fillShots();
-  if (clubSelect.value) useDataShot(clubSelect.value, -1);
-});
-shotSelect.addEventListener('change', () => {
-  if (clubSelect.value) useDataShot(clubSelect.value, Number(shotSelect.value));
-});
-for (const [id, step] of [['#prev-shot', -1], ['#next-shot', 1]] as const) {
-  element(id).addEventListener('click', () => {
-    const club = clubSelect.value;
-    const count = dataShots(club).length;
-    if (!club || count === 0) return;
-    const next = (Number(shotSelect.value) + step + count) % count;
-    shotSelect.value = String(next);
-    useDataShot(club, next);
-  });
-}
-element<HTMLInputElement>('#data-file').addEventListener('change', async (event) => {
-  const file = (event.target as HTMLInputElement).files?.[0];
-  if (!file) return;
-  try {
-    library = await readLibrary(file);
-    libraryError.hidden = true;
-    fillLibrary();
-  } catch (error) {
-    libraryError.textContent = error instanceof Error ? error.message : 'That file could not be read.';
-    libraryError.hidden = false;
-  }
+element('#find-ace').addEventListener('click', () => {
+  aceStatus.textContent = 'Searching…';
+  // Let the status paint before the search runs.
+  setTimeout(() => {
+    const ace = findHoleOut(toLaunch(settings), toEnvironment(settings), shotOptions().hole!, surface === 'hole' ? {} : { surface: SURFACES[surface] });
+    if (!ace) {
+      aceStatus.textContent = 'No small change holes this one. Move the pin closer to your carry and try again.';
+      return;
+    }
+    const speed = unitFor('speed', system);
+    const change = speed.fromSI(ace.ballSpeed - settings.ballSpeed);
+    const turn = ((ace.launchDirection - settings.launchDirection) * 180) / Math.PI;
+    Object.assign(settings, { ballSpeed: ace.ballSpeed, launchDirection: ace.launchDirection });
+    panel.refresh();
+    aceStatus.textContent = `Holed with ball speed ${signed(change)} ${speed.label} and start line ${signed(turn)}°.`;
+    scheduleUpdate(true);
+  }, 30);
 });
 
 for (const button of unitButtons) {
@@ -257,11 +254,12 @@ for (const button of cameraButtons) {
     course.setCamera(mode);
   });
 }
-for (const button of [forcesButton, ghostButton]) {
+for (const button of Object.values(layerButtons)) {
   button.addEventListener('click', () => {
     button.setAttribute('aria-pressed', String(button.getAttribute('aria-pressed') !== 'true'));
-    course.setLayers(forcesButton.getAttribute('aria-pressed') === 'true', ghostButton.getAttribute('aria-pressed') === 'true');
-    lastRender();
+    course.setLayers(layerOn('forces'), layerOn('ghost'), layerOn('tour'), layerOn('trails'));
+    if (button === layerButtons.trails) scheduleUpdate();
+    else lastRender();
   });
 }
 element<HTMLSelectElement>('#speed').addEventListener('change', (event) => {
@@ -273,5 +271,4 @@ const resize = new ResizeObserver(() => lastRender());
 resize.observe(element('#side-wrap'));
 resize.observe(element('#top-wrap'));
 
-fillLibrary();
 applyUnits(system);

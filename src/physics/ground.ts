@@ -205,6 +205,12 @@ export function simulateShot(launch: LaunchConditions, env: Environment, options
       break;
     }
     const hop = flyFrom(after, env, { ...options, ball });
+    const touchdown = hop.trajectory.stateAt(hop.flightTime);
+    if (hole && hop.landed && dropsIn(Math.hypot(touchdown[0] - hole.pin.x, touchdown[2] - hole.pin.z), 0)) {
+      bounces.push(hop);
+      segments.push({ kind: 'air', start: clock, trajectory: hop.trajectory });
+      return new Shot(flight, bounces, segments, vec3(hole.pin.x, touchdown[1], hole.pin.z), true);
+    }
     bounces.push(hop);
     segments.push({ kind: 'air', start: clock, trajectory: hop.trajectory });
     clock += hop.flightTime;

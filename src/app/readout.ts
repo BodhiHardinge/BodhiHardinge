@@ -9,7 +9,7 @@ export type Column = (typeof COLUMNS)[number];
 export type KnownValues = Partial<Record<'carry' | 'total' | 'offline' | 'apex' | 'landAngle', number>>;
 
 export type BoardRow =
-  | { readonly label: string; readonly tone: 'shot' | 'ghost'; readonly shot: Shot }
+  | { readonly label: string; readonly tone: 'shot' | 'tour' | 'ghost'; readonly shot: Shot }
   | { readonly label: string; readonly tone: 'reference'; readonly values: KnownValues };
 
 const side = (metres: number) => (metres > 0.05 ? ' R' : metres < -0.05 ? ' L' : '');

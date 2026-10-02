@@ -15,6 +15,8 @@ interface Theme {
   readonly apex: string;
   readonly land: string;
   readonly ghost: string;
+  readonly tour: string;
+  readonly trail: string;
   readonly green: string;
   readonly pin: string;
   readonly dots: string;
@@ -35,6 +37,10 @@ export interface WindIndicator {
 export interface ChartExtras {
   /** The same shot in standard conditions, drawn as a faint dashed line. */
   readonly ghost?: Shot | null;
+  /** The Tour average for the same club in the same conditions, drawn as a blue dashed line. */
+  readonly tour?: Shot | null;
+  /** Other recorded shots, drawn as faint lines. */
+  readonly trails?: readonly Shot[];
   readonly hole?: HoleLayout | null;
   /** Landing points of other shots (x downrange, z right), m. */
   readonly dispersion?: readonly { readonly x: number; readonly z: number }[];
@@ -57,6 +63,8 @@ function readTheme(): Theme {
     apex: v('--apex-color'),
     land: v('--land-color'),
     ghost: v('--ghost-color'),
+    tour: v('--tour-color'),
+    trail: v('--trail-color'),
     green: v('--green-surface'),
     pin: v('--pin-color'),
     dots: v('--dispersion-color'),
@@ -130,18 +138,21 @@ export class FlightChart {
 
     const unit = unitFor('distance', system);
     const d = unit.fromSI;
-    const pointsOf = (s: Shot) =>
-      Array.from({ length: SAMPLES + 1 }, (_, i) => {
-        const p = s.positionAt((s.duration * i) / SAMPLES);
+    const pointsOf = (s: Shot, samples = SAMPLES) =>
+      Array.from({ length: samples + 1 }, (_, i) => {
+        const p = s.positionAt((s.duration * i) / samples);
         return { x: d(p.x), v: d(this.view === 'side' ? p.y : p.z) };
       });
     const points = pointsOf(shot);
     const ghost = extras.ghost ? pointsOf(extras.ghost) : [];
+    const tour = extras.tour ? pointsOf(extras.tour) : [];
+    const trails = (extras.trails ?? []).map((t) => pointsOf(t, 90));
     const pinX = extras.hole ? d(extras.hole.pin.x) : 0;
 
     // One scale for both axes, chosen so the whole shot (and the pin) fits.
-    let needX = Math.max(10, pinX + 8, ...points.map((p) => p.x), ...ghost.map((p) => p.x)) * 1.06;
-    const needV = Math.max(4, ...points.map((p) => Math.abs(p.v)), ...ghost.map((p) => Math.abs(p.v))) * 1.25;
+    const all = [...points, ...ghost, ...tour];
+    let needX = Math.max(10, pinX + 8, ...all.map((p) => p.x)) * 1.06;
+    const needV = Math.max(4, ...all.map((p) => Math.abs(p.v))) * 1.25;
     needX = Math.max(needX, (needV * plotW) / (this.view === 'side' ? plotH : plotH / 2));
     this.updateSpan(system, niceCeil(needX));
     const scale = plotW / this.span;
@@ -168,15 +179,19 @@ export class FlightChart {
         ctx.fill();
       }
     }
-    if (ghost.length) {
-      ctx.strokeStyle = theme.ghost;
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([5, 4]);
+    const line = (pts: { x: number; v: number }[], colour: string, width: number, dash: number[]) => {
+      if (!pts.length) return;
+      ctx.strokeStyle = colour;
+      ctx.lineWidth = width;
+      ctx.setLineDash(dash);
       ctx.beginPath();
-      ghost.forEach((p, i) => (i ? ctx.lineTo(sx(p.x), sy(p.v)) : ctx.moveTo(sx(p.x), sy(p.v))));
+      pts.forEach((p, i) => (i ? ctx.lineTo(sx(p.x), sy(p.v)) : ctx.moveTo(sx(p.x), sy(p.v))));
       ctx.stroke();
       ctx.setLineDash([]);
-    }
+    };
+    for (const trail of trails) line(trail, theme.trail, 1, []);
+    line(ghost, theme.ghost, 1.5, [5, 4]);
+    line(tour, theme.tour, 1.75, [7, 3]);
     if (extras.hole) this.drawPin(ctx, theme, sx(pinX), sy(this.view === 'side' ? 0 : d(extras.hole.pin.z)), scale, unit.label);
 
     ctx.lineWidth = 2.25;

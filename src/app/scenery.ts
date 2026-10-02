@@ -9,9 +9,9 @@ export const COLOURS = {
   rough: '#3d7334',
   fairwayLight: '#5fae4f',
   fairwayDark: '#4f9b43',
-  greenLight: '#7cc964',
-  greenDark: '#72c05b',
-  fringe: '#5fb04d',
+  greenLight: '#97de7a',
+  greenDark: '#8ad46d',
+  fringe: '#4e9a3f',
   tee: '#6cbd5c',
   pine: '#1d4a2a',
   trunk: '#5a4330',
@@ -40,6 +40,16 @@ export function canvasTexture(width: number, height: number, draw: (ctx: CanvasR
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
+}
+
+// Turf layers are painted back to front without depth, so nearly coplanar layers can never flicker (z-fighting).
+// One invisible depth-only plane afterwards gives everything else correct occlusion, with a hole at the cup.
+export function groundLayer<T extends THREE.Mesh>(mesh: T, order: number): T {
+  mesh.renderOrder = -100 + order;
+  const material = mesh.material as THREE.Material;
+  material.depthTest = false;
+  material.depthWrite = false;
+  return mesh;
 }
 
 /** Sky, light, rough, striped fairway, tee, pines and azaleas. */
@@ -77,7 +87,7 @@ export function buildRange(scene: THREE.Scene): void {
       }),
     );
     rough.rotation.x = -Math.PI / 2;
-    scene.add(rough);
+    scene.add(groundLayer(rough, 0));
 
     const length = 480;
     const stripes = canvasTexture(64, 4, (ctx) => {
@@ -90,13 +100,13 @@ export function buildRange(scene: THREE.Scene): void {
     stripes.repeat.set(length / 24, 1);
     const fairway = new THREE.Mesh(new THREE.PlaneGeometry(length, 48), new THREE.MeshLambertMaterial({ map: stripes }));
     fairway.rotation.x = -Math.PI / 2;
-    fairway.position.set(length / 2 - 15, 0.01, 0);
-    scene.add(fairway);
+    fairway.position.set(length / 2 - 15, 0, 0);
+    scene.add(groundLayer(fairway, 1));
 
     const tee = new THREE.Mesh(new THREE.PlaneGeometry(8, 8), new THREE.MeshLambertMaterial({ color: COLOURS.tee }));
     tee.rotation.x = -Math.PI / 2;
-    tee.position.set(0, 0.02, 0);
-    scene.add(tee);
+    tee.position.set(0, 0, 0);
+    scene.add(groundLayer(tee, 2));
 
     const rnd = random(1934);
     const spots: THREE.Matrix4[] = [];
@@ -183,20 +193,18 @@ export function buildMarkers(group: THREE.Group, system: UnitSystem): void {
     }
   }
 
-/** Green, fringe, cup and a seven-foot flagstick with a yellow flag. */
+/** Green, fringe, a real cup, the depth plane with its hole, and a seven-foot flagstick with a yellow flag. */
 export function buildHole(hole: HoleLayout): THREE.Group {
   const group = new THREE.Group();
-  const flat = (geometry: THREE.BufferGeometry, colour: string | THREE.Texture, y: number) => {
-    const material = typeof colour === 'string' ? new THREE.MeshLambertMaterial({ color: colour }) : new THREE.MeshLambertMaterial({ map: colour });
-    const mesh = new THREE.Mesh(geometry, material);
+  const flat = (geometry: THREE.BufferGeometry, material: THREE.Material, order: number, x: number, z: number) => {
+    const mesh = groundLayer(new THREE.Mesh(geometry, material), order);
     mesh.rotation.x = -Math.PI / 2;
-    mesh.position.y = y;
+    mesh.position.set(x, 0, z);
     group.add(mesh);
     return mesh;
   };
   const g = hole.green;
-  const fringe = flat(new THREE.CircleGeometry(g.radius + 1.2, 64), COLOURS.fringe, 0.015);
-  fringe.position.set(g.x, 0.015, g.z);
+  flat(new THREE.CircleGeometry(g.radius + 1.2, 64), new THREE.MeshLambertMaterial({ color: COLOURS.fringe }), 3, g.x, g.z);
   const stripes = canvasTexture(64, 4, (ctx) => {
     ctx.fillStyle = COLOURS.greenLight;
     ctx.fillRect(0, 0, 32, 4);
@@ -205,12 +213,32 @@ export function buildHole(hole: HoleLayout): THREE.Group {
   });
   stripes.wrapS = stripes.wrapT = THREE.RepeatWrapping;
   stripes.repeat.set(g.radius / 2.5, 1);
-  const green = flat(new THREE.CircleGeometry(g.radius, 64), stripes, 0.02);
-  green.position.set(g.x, 0.02, g.z);
-  const cup = flat(new THREE.CircleGeometry(CUP_RADIUS, 24), '#0c0c0c', 0.024);
-  cup.position.set(hole.pin.x, 0.024, hole.pin.z);
-  const rim = flat(new THREE.RingGeometry(CUP_RADIUS, CUP_RADIUS + 0.012, 24), '#f2f2f2', 0.025);
-  rim.position.set(hole.pin.x, 0.025, hole.pin.z);
+  flat(new THREE.CircleGeometry(g.radius, 64), new THREE.MeshLambertMaterial({ map: stripes }), 4, g.x, g.z);
+  flat(new THREE.RingGeometry(CUP_RADIUS, CUP_RADIUS + 0.01, 32), new THREE.MeshBasicMaterial({ color: '#f2f2f2' }), 5, hole.pin.x, hole.pin.z);
+
+  const outline = new THREE.Shape();
+  outline.moveTo(-3000, -3000);
+  outline.lineTo(3000, -3000);
+  outline.lineTo(3000, 3000);
+  outline.lineTo(-3000, 3000);
+  outline.closePath();
+  const cutout = new THREE.Path();
+  cutout.absarc(hole.pin.x, -hole.pin.z, CUP_RADIUS, 0, Math.PI * 2, true);
+  outline.holes.push(cutout);
+  const depth = new THREE.Mesh(new THREE.ShapeGeometry(outline, 48), new THREE.MeshBasicMaterial({ colorWrite: false }));
+  depth.rotation.x = -Math.PI / 2;
+  depth.renderOrder = -1;
+  group.add(depth);
+
+  const cupDepth = 0.1;
+  const liner = new THREE.Mesh(
+    new THREE.CylinderGeometry(CUP_RADIUS, CUP_RADIUS, cupDepth, 32, 1, true).translate(0, -cupDepth / 2, 0),
+    new THREE.MeshLambertMaterial({ color: '#e9e9e9', side: THREE.BackSide }),
+  );
+  const bottom = new THREE.Mesh(new THREE.CircleGeometry(CUP_RADIUS, 32).rotateX(-Math.PI / 2).translate(0, -cupDepth, 0), new THREE.MeshLambertMaterial({ color: '#3a2a1c' }));
+  liner.position.set(hole.pin.x, 0, hole.pin.z);
+  bottom.position.set(hole.pin.x, 0, hole.pin.z);
+  group.add(liner, bottom);
 
   const pole = new THREE.Mesh(
     new THREE.CylinderGeometry(0.0125, 0.0125, 2.13, 8).translate(0, 1.065, 0),

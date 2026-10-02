@@ -40,6 +40,8 @@
   --tag-text: #0b3b2c;
   --vignette: rgba(0, 0, 0, 0);
   --ghost-color: #8a958e;
+  --tour-color: #3d6fd1;
+  --trail-color: rgba(29, 38, 33, 0.14);
   --green-surface: #d5ead0;
   --pin-color: #c8102e;
   --dispersion-color: rgba(0, 103, 71, 0.35);
@@ -323,6 +325,162 @@ select:disabled {
   white-space: nowrap;
 }
 
+.subhead {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.chip {
+  font: 500 0.7rem var(--sans);
+  color: var(--green-deep);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  padding: 3px 9px;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.chip[aria-pressed='true'] {
+  background: var(--green);
+  border-color: var(--green);
+  color: var(--paper);
+}
+.chip-plain {
+  color: var(--muted);
+}
+.check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.76rem;
+  color: var(--ink);
+}
+.check input {
+  accent-color: var(--green);
+}
+.wide-button {
+  font: 600 0.74rem var(--sans);
+  color: var(--paper);
+  background: var(--green);
+  border: none;
+  border-radius: 6px;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+.shot-dialog {
+  margin: auto;
+  width: min(1100px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  padding: 0;
+  background: var(--paper);
+  color: var(--ink);
+}
+.shot-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+.shot-dialog::backdrop {
+  background: rgba(11, 59, 44, 0.45);
+}
+.dialog-head {
+  background: var(--green);
+  color: var(--paper);
+  padding: 12px 16px;
+}
+.dialog-head h2 {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 1.2rem;
+}
+.dialog-head p {
+  font-size: 0.75rem;
+  color: var(--gold);
+}
+.dialog-scroll {
+  overflow: auto;
+  min-height: 0;
+  flex: 1;
+}
+.shot-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+}
+.shot-table th {
+  position: sticky;
+  top: 0;
+  background: var(--green-tint);
+  text-align: left;
+  padding: 6px 8px;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.shot-table th button {
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  background: none;
+  border: none;
+  color: var(--green-deep);
+  cursor: pointer;
+  padding: 0;
+}
+.shot-table td {
+  padding: 4px 8px;
+  border-top: 1px solid var(--rule);
+  white-space: nowrap;
+}
+.shot-table tr.dropped td {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.shot-table tr.dropped td:first-child,
+.shot-table tr.dropped td:last-child,
+.shot-table tr.dropped td.why {
+  text-decoration: none;
+}
+.shot-table td.why {
+  color: var(--red);
+  white-space: normal;
+  min-width: 160px;
+}
+.row-play {
+  font: 600 0.68rem var(--sans);
+  color: var(--green-deep);
+  background: var(--gold);
+  border: none;
+  border-radius: 999px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--rule);
+}
+.fly-hint {
+  position: absolute;
+  right: 10px;
+  bottom: 8px;
+  font-size: 0.62rem;
+  color: var(--paper);
+  background: rgba(11, 59, 44, 0.7);
+  border-radius: 6px;
+  padding: 3px 8px;
+  pointer-events: none;
+}
+
 /* Main column */
 #vis {
   min-width: 0;
@@ -577,6 +735,11 @@ select:disabled {
 .board tr + tr td,
 .board tr + tr th {
   border-top: 1px solid var(--rule);
+}
+.board .row-tour td {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--tour-color);
 }
 .board .row-ghost td {
   font-size: 0.95rem;
