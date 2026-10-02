@@ -1,5 +1,4 @@
-import type { FlightResult } from '../physics/flight.ts';
-import { STATE_SIZE } from '../physics/launch.ts';
+import type { Shot } from '../physics/ground.ts';
 import { unitFor, type UnitSystem } from './units.ts';
 
 export type View = 'side' | 'top';
@@ -15,13 +14,16 @@ interface Theme {
   readonly apex: string;
   readonly land: string;
   readonly accent: string;
+  readonly tagBg: string;
+  readonly tagBorder: string;
+  readonly vignette: string;
   readonly path: readonly [number, number, number][];
   readonly mono: string;
   readonly sans: string;
 }
 
 const PAD = { left: 54, right: 18, top: 28, bottom: 42 };
-const SAMPLES = 240;
+const SAMPLES = 480;
 
 function readTheme(): Theme {
   const css = getComputedStyle(document.documentElement);
@@ -36,7 +38,10 @@ function readTheme(): Theme {
     launch: v('--launch-color'),
     apex: v('--apex-color'),
     land: v('--land-color'),
-    accent: v('--teal'),
+    accent: v('--tag-text'),
+    tagBg: v('--tag-bg'),
+    tagBorder: v('--tag-border'),
+    vignette: v('--vignette'),
     path: [hexToRgb(v('--traj-start')), hexToRgb(v('--traj-mid')), hexToRgb(v('--traj-end'))],
     mono: v('--mono'),
     sans: v('--sans'),
@@ -84,7 +89,7 @@ export interface WindIndicator {
   readonly speed: number;
 }
 
-/** One launch-monitor style screen: a side or top view of the flight. */
+/** A side or top view of the whole shot: flight, bounces and roll. */
 export class FlightChart {
   private readonly canvas: HTMLCanvasElement;
   private readonly view: View;
@@ -92,14 +97,14 @@ export class FlightChart {
   private xMax = 0;
   private yMax = 0;
   private system: UnitSystem | null = null;
-  private readonly buffer = new Float64Array(STATE_SIZE);
 
   constructor(canvas: HTMLCanvasElement, view: View) {
     this.canvas = canvas;
     this.view = view;
   }
 
-  render(result: FlightResult, system: UnitSystem, wind: WindIndicator): void {
+  render(shot: Shot, system: UnitSystem, wind: WindIndicator): void {
+    const result = shot.flight;
     this.theme ??= readTheme();
     const theme = this.theme;
     const ctx = this.prepare();
@@ -111,13 +116,13 @@ export class FlightChart {
 
     const xs = new Float64Array(SAMPLES + 1);
     const ys = new Float64Array(SAMPLES + 1);
-    const duration = result.trajectory.duration;
+    const duration = shot.duration;
     let maxX = 0;
     let maxY = 0;
     for (let i = 0; i <= SAMPLES; i++) {
-      const s = result.trajectory.stateAt((duration * i) / SAMPLES, this.buffer);
-      xs[i] = distance.fromSI(s[0]);
-      ys[i] = vertical.fromSI(this.view === 'side' ? s[1] : s[2]);
+      const p = shot.positionAt((duration * i) / SAMPLES);
+      xs[i] = distance.fromSI(p.x);
+      ys[i] = vertical.fromSI(this.view === 'side' ? p.y : p.z);
       maxX = Math.max(maxX, xs[i]);
       maxY = Math.max(maxY, this.view === 'side' ? ys[i] : Math.abs(ys[i]));
     }
@@ -157,11 +162,16 @@ export class FlightChart {
     if (result.landed) {
       const lx = distance.fromSI(result.landingPosition.x);
       const ly = this.view === 'side' ? 0 : distance.fromSI(result.landingPosition.z);
-      const label =
-        this.view === 'side'
-          ? `${distance.fromSI(result.carry).toFixed(1)} ${distance.label}`
-          : `${Math.abs(ly).toFixed(1)} ${distance.label} ${ly > 0.05 ? 'R' : ly < -0.05 ? 'L' : ''}`.trim();
+      const label = this.view === 'side' ? `${distance.fromSI(result.carry).toFixed(1)} ${distance.label}` : '';
       this.drawLanding(ctx, theme, sx(lx), sy(ly), label, W);
+
+      const rx = distance.fromSI(shot.restPosition.x);
+      const rz = distance.fromSI(shot.restPosition.z);
+      const restLabel =
+        this.view === 'side'
+          ? `${distance.fromSI(shot.total).toFixed(1)} ${distance.label} total`
+          : `${Math.abs(rz).toFixed(1)} ${distance.label} ${rz > 0.05 ? 'R' : rz < -0.05 ? 'L' : ''}`.trim();
+      this.drawRest(ctx, theme, sx(rx), sy(this.view === 'side' ? 0 : rz), restLabel, W);
     }
 
     const next = this.drawTag(ctx, theme, PAD.left + 8, this.view === 'side' ? 'SIDE VIEW' : 'TOP VIEW');
@@ -216,7 +226,7 @@ export class FlightChart {
       PAD.left + plotW / 2, PAD.top + plotH / 2, Math.max(plotW, plotH) * 0.7,
     );
     glow.addColorStop(0, 'rgba(0,0,0,0)');
-    glow.addColorStop(1, 'rgba(0,0,0,0.35)');
+    glow.addColorStop(1, theme.vignette);
     ctx.fillStyle = glow;
     ctx.fillRect(PAD.left, PAD.top, plotW, plotH);
 
@@ -332,14 +342,32 @@ export class FlightChart {
     ctx.restore();
   }
 
+  private drawRest(ctx: CanvasRenderingContext2D, theme: Theme, x: number, y: number, label: string, W: number): void {
+    ctx.save();
+    ctx.fillStyle = theme.background;
+    ctx.strokeStyle = theme.launch;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y, 4.5, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = theme.launch;
+    ctx.font = `600 10px ${theme.mono}`;
+    const width = ctx.measureText(label).width;
+    const fitsRight = x + 10 + width < W - PAD.right;
+    ctx.textAlign = fitsRight ? 'left' : 'right';
+    ctx.fillText(label, fitsRight ? x + 10 : x - 10, this.view === 'side' ? y - 22 : y + 4);
+    ctx.restore();
+  }
+
   /** Draws a tag in the plot's top-left corner row and returns the x where the next tag can start. */
   private drawTag(ctx: CanvasRenderingContext2D, theme: Theme, x: number, text: string, icon = 0): number {
     ctx.save();
     ctx.font = `700 9px ${theme.mono}`;
     const w = ctx.measureText(text).width + 16 + icon;
     const y = PAD.top + 8;
-    ctx.fillStyle = 'rgba(13, 216, 178, 0.08)';
-    ctx.strokeStyle = 'rgba(13, 216, 178, 0.22)';
+    ctx.fillStyle = theme.tagBg;
+    ctx.strokeStyle = theme.tagBorder;
     ctx.beginPath();
     ctx.roundRect(x, y, w, 18, 3);
     ctx.fill();

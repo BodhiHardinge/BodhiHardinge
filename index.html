@@ -2,42 +2,78 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="description" content="Golf ball flight simulator with a calibrated physics engine." />
     <title>Ballflight Simulator</title>
     <link
       rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='12' fill='%230dd8b2'/%3E%3C/svg%3E"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%23006747'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%23f4d35e'/%3E%3C/svg%3E"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Libre+Caslon+Display&family=Libre+Franklin:wght@400;500;600;700&display=swap"
     />
   </head>
   <body>
     <div id="app">
-      <aside id="controls" aria-label="Shot settings">
-        <header class="wordmark">
+      <header class="masthead">
+        <div class="wordmark">
           <span class="wordmark-title">Ballflight</span>
-          <span class="wordmark-sub">Physics Engine</span>
-        </header>
-        <div class="toolbar">
-          <div class="segmented" role="group" aria-label="Units">
-            <button type="button" id="units-imperial" data-units="imperial" aria-pressed="true">Yards</button>
-            <button type="button" id="units-metric" data-units="metric" aria-pressed="false">Metres</button>
-          </div>
-          <label class="preset">
-            <span>Tour average</span>
-            <select id="preset"></select>
-          </label>
+          <span class="wordmark-sub">Ball Flight Laboratory</span>
         </div>
+        <div class="segmented" role="group" aria-label="Units">
+          <button type="button" id="units-imperial" data-units="imperial" aria-pressed="true">Yards</button>
+          <button type="button" id="units-metric" data-units="metric" aria-pressed="false">Metres</button>
+        </div>
+      </header>
+
+      <aside id="controls" aria-label="Shot settings">
+        <label class="field">
+          <span>Tour average</span>
+          <select id="preset"></select>
+        </label>
+        <label class="field">
+          <span>Landing on</span>
+          <select id="surface"></select>
+        </label>
         <div id="params"></div>
       </aside>
 
       <main id="vis">
-        <div class="screen" id="side-wrap">
-          <canvas id="side-cv" role="img" aria-label="Side view of the ball flight"></canvas>
+        <section class="course" aria-label="3D view of the shot">
+          <canvas id="course-cv"></canvas>
+          <div class="course-bar">
+            <div class="course-title">The Range<span id="course-phase">Ready</span></div>
+            <div class="cameras" role="group" aria-label="Camera">
+              <button type="button" id="cam-tee" data-camera="tee" aria-pressed="true">Tee</button>
+              <button type="button" id="cam-follow" data-camera="follow" aria-pressed="false">Follow</button>
+              <button type="button" id="cam-side" data-camera="side" aria-pressed="false">Side</button>
+              <button type="button" id="cam-above" data-camera="above" aria-pressed="false">Above</button>
+              <button type="button" id="replay" class="replay">Replay</button>
+            </div>
+          </div>
+        </section>
+
+        <div class="charts">
+          <div class="screen" id="side-wrap">
+            <canvas id="side-cv" role="img" aria-label="Side view of the shot"></canvas>
+          </div>
+          <div class="screen" id="top-wrap">
+            <canvas id="top-cv" role="img" aria-label="Top view of the shot"></canvas>
+          </div>
         </div>
-        <div class="screen" id="top-wrap">
-          <canvas id="top-cv" role="img" aria-label="Top view of the ball flight"></canvas>
-        </div>
-        <section id="readout" aria-label="Shot results"></section>
+
+        <section class="board" aria-label="Shot results">
+          <div class="board-head">
+            <h2>Leaderboard</h2>
+            <span class="board-sub" id="board-sub"></span>
+          </div>
+          <div class="board-scroll">
+            <table id="board"></table>
+          </div>
+        </section>
       </main>
     </div>
     <script type="module" src="/src/app/main.ts"></script>
