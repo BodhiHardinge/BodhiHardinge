@@ -39,6 +39,10 @@
   --tag-border: #b9cfbe;
   --tag-text: #0b3b2c;
   --vignette: rgba(0, 0, 0, 0);
+  --ghost-color: #8a958e;
+  --green-surface: #d5ead0;
+  --pin-color: #c8102e;
+  --dispersion-color: rgba(0, 103, 71, 0.35);
 
   --display: 'Libre Caslon Display', 'Libre Caslon Text', Georgia, 'Times New Roman', serif;
   --sans: 'Libre Franklin', 'Franklin Gothic Medium', 'Helvetica Neue', Arial, sans-serif;
@@ -48,6 +52,10 @@
 html,
 body {
   height: 100%;
+}
+
+[hidden] {
+  display: none !important;
 }
 
 body {
@@ -254,6 +262,67 @@ input[type='number']:focus {
   min-width: 26px;
 }
 
+/* Your shots */
+.library {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.section-head.first {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
+}
+.library-name {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.library-error {
+  font-size: 0.72rem;
+  color: var(--red);
+}
+.shot-nav {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.shot-nav button,
+.file-button {
+  font: 600 0.72rem var(--sans);
+  color: var(--green-deep);
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+  text-align: center;
+}
+.file-button {
+  position: relative;
+  display: block;
+}
+.file-button input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.file-button:focus-within {
+  outline: 2px solid var(--gold-ink);
+  outline-offset: 2px;
+}
+select:disabled {
+  opacity: 0.55;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
 /* Main column */
 #vis {
   min-width: 0;
@@ -333,9 +402,77 @@ input[type='number']:focus {
   background: var(--paper);
   color: var(--green-deep);
 }
-.cameras .replay {
+.course-tools {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+.cameras .hit {
   background: var(--gold);
   color: var(--green-deep);
+  padding: 5px 16px;
+}
+.speed select {
+  max-width: none;
+  background: transparent;
+  color: #d6e6dc;
+  border: 1px solid rgba(214, 230, 220, 0.4);
+  border-radius: 999px;
+  font: 600 0.66rem var(--sans);
+  padding: 3px 6px;
+}
+.speed select option {
+  color: var(--ink);
+}
+.pip {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  width: min(320px, 42%);
+  aspect-ratio: 1 / 0.72;
+  max-height: 55%;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  pointer-events: none;
+  padding: 6px 8px;
+  font-size: 0.6rem;
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pip h3 {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 0.78rem;
+  color: var(--green);
+}
+.pip ul {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px 8px;
+}
+.pip-keys i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 3px;
+  vertical-align: -1px;
+}
+.pip-values {
+  margin-top: auto;
+  font-variant-numeric: tabular-nums;
+}
+.pip-values b {
+  font-weight: 600;
+  color: var(--muted);
+}
+.pip p {
+  color: var(--muted);
+  font-size: 0.56rem;
 }
 
 .charts {
@@ -441,13 +578,15 @@ input[type='number']:focus {
 .board tr + tr th {
   border-top: 1px solid var(--rule);
 }
-.board .row-tour td {
+.board .row-ghost td {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.board .row-reference td {
   font-size: 0.95rem;
   font-weight: 600;
   color: var(--red);
-}
-.board .row-tour[hidden] {
-  display: none;
 }
 
 /* Phones: stack everything and let the page scroll. */
@@ -474,8 +613,11 @@ input[type='number']:focus {
     overflow: visible;
   }
   .course {
-    height: 300px;
+    height: 460px;
     flex: none;
+  }
+  .pip {
+    width: 62%;
   }
   .charts {
     grid-template-columns: 1fr;

@@ -96,7 +96,7 @@ interface GroundSegment {
 type Segment = AirSegment | GroundSegment;
 
 export interface ShotOptions extends FlightOptions {
-  /** Turf used everywhere, unless a hole is given. */
+  /** Turf used everywhere; without it, a hole decides the turf by position. */
   readonly surface?: Surface;
   /** A hole: turf then depends on where the ball lands, and the ball can drop in the cup. */
   readonly hole?: HoleLayout;
@@ -186,7 +186,7 @@ export class Shot {
 export function simulateShot(launch: LaunchConditions, env: Environment, options: ShotOptions = {}): Shot {
   const ball = options.ball ?? TOUR_BALL;
   const hole = options.hole;
-  const turf = (x: number, z: number) => (hole ? surfaceOn(hole, x, z) : (options.surface ?? SURFACES.fairway));
+  const turf = (x: number, z: number) => options.surface ?? (hole ? surfaceOn(hole, x, z) : SURFACES.fairway);
   const flight = simulateFlight(launch, env, options);
   const segments: Segment[] = [{ kind: 'air', start: 0, trajectory: flight.trajectory }];
   const bounces: FlightResult[] = [];

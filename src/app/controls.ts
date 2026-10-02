@@ -34,6 +34,8 @@ const CONTROLS: readonly ControlSpec[] = [
   { key: 'temperature', label: 'Temperature', section: 'Conditions', unit: 'temperature',
     range: { imperial: { min: 20, max: 110, step: 1 }, metric: { min: -5, max: 45, step: 1 } } },
   { key: 'humidity', label: 'Humidity', section: 'Conditions', unit: PERCENT, range: { min: 0, max: 100, step: 1 } },
+  { key: 'pinDistance', label: 'Pin distance', section: 'Hole', unit: 'distance',
+    range: { imperial: { min: 30, max: 380, step: 1 }, metric: { min: 30, max: 350, step: 1 } } },
 ];
 
 const decimals = (step: number) => (Number.isInteger(step) ? 0 : String(step).split('.')[1].length);

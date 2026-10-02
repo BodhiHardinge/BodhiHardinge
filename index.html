@@ -30,6 +30,28 @@
       </header>
 
       <aside id="controls" aria-label="Shot settings">
+        <section class="library" aria-label="Your shots">
+          <h2 class="section-head first">Your shots</h2>
+          <p class="library-name" id="library-name">No export loaded yet.</p>
+          <label class="field">
+            <span>Club</span>
+            <select id="data-club"></select>
+          </label>
+          <label class="field">
+            <span>Shot</span>
+            <select id="data-shot"></select>
+          </label>
+          <div class="shot-nav">
+            <button type="button" id="prev-shot">Previous</button>
+            <button type="button" id="next-shot">Next</button>
+          </div>
+          <label class="file-button">
+            Load an Awesome Golf or Garmin CSV
+            <input type="file" id="data-file" accept=".csv,text/csv" />
+          </label>
+          <p class="library-error" id="library-error" hidden></p>
+        </section>
+        <h2 class="section-head">Shot</h2>
         <label class="field">
           <span>Tour average</span>
           <select id="preset"></select>
@@ -46,14 +68,32 @@
           <canvas id="course-cv"></canvas>
           <div class="course-bar">
             <div class="course-title">The Range<span id="course-phase">Ready</span></div>
-            <div class="cameras" role="group" aria-label="Camera">
-              <button type="button" id="cam-tee" data-camera="tee" aria-pressed="true">Tee</button>
-              <button type="button" id="cam-follow" data-camera="follow" aria-pressed="false">Follow</button>
-              <button type="button" id="cam-side" data-camera="side" aria-pressed="false">Side</button>
-              <button type="button" id="cam-above" data-camera="above" aria-pressed="false">Above</button>
-              <button type="button" id="replay" class="replay">Replay</button>
+            <div class="course-tools">
+              <div class="cameras" role="group" aria-label="Camera">
+                <button type="button" id="cam-tee" data-camera="tee" aria-pressed="true">Tee</button>
+                <button type="button" id="cam-swing" data-camera="swing" aria-pressed="false">Swing</button>
+                <button type="button" id="cam-follow" data-camera="follow" aria-pressed="false">Follow</button>
+                <button type="button" id="cam-side" data-camera="side" aria-pressed="false">Side</button>
+                <button type="button" id="cam-above" data-camera="above" aria-pressed="false">Above</button>
+              </div>
+              <div class="cameras" role="group" aria-label="Playback and layers">
+                <button type="button" id="layer-forces" aria-pressed="true">Forces</button>
+                <button type="button" id="layer-ghost" aria-pressed="true">Standard</button>
+                <label class="speed">
+                  <span class="visually-hidden">Playback speed</span>
+                  <select id="speed">
+                    <option value="0.1">0.1x</option>
+                    <option value="0.25">0.25x</option>
+                    <option value="0.5">0.5x</option>
+                    <option value="1" selected>1x</option>
+                    <option value="2">2x</option>
+                  </select>
+                </label>
+                <button type="button" id="hit" class="hit">Hit</button>
+              </div>
             </div>
           </div>
+          <div class="pip" id="pip-legend"></div>
         </section>
 
         <div class="charts">

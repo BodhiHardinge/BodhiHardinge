@@ -1,4 +1,5 @@
 import type { Shot } from '../physics/ground.ts';
+import type { HoleLayout } from '../physics/hole.ts';
 import { unitFor, type UnitSystem } from './units.ts';
 
 export type View = 'side' | 'top';
@@ -13,16 +14,33 @@ interface Theme {
   readonly launch: string;
   readonly apex: string;
   readonly land: string;
-  readonly accent: string;
+  readonly ghost: string;
+  readonly green: string;
+  readonly pin: string;
+  readonly dots: string;
   readonly tagBg: string;
   readonly tagBorder: string;
-  readonly vignette: string;
+  readonly tagText: string;
   readonly path: readonly [number, number, number][];
-  readonly mono: string;
-  readonly sans: string;
+  readonly font: string;
 }
 
-const PAD = { left: 54, right: 18, top: 28, bottom: 42 };
+export interface WindIndicator {
+  /** Direction the wind blows from, rad (0 = headwind). */
+  readonly from: number;
+  /** m/s */
+  readonly speed: number;
+}
+
+export interface ChartExtras {
+  /** The same shot in standard conditions, drawn as a faint dashed line. */
+  readonly ghost?: Shot | null;
+  readonly hole?: HoleLayout | null;
+  /** Landing points of other shots (x downrange, z right), m. */
+  readonly dispersion?: readonly { readonly x: number; readonly z: number }[];
+}
+
+const PAD = { left: 50, right: 16, top: 30, bottom: 40 };
 const SAMPLES = 480;
 
 function readTheme(): Theme {
@@ -38,18 +56,20 @@ function readTheme(): Theme {
     launch: v('--launch-color'),
     apex: v('--apex-color'),
     land: v('--land-color'),
-    accent: v('--tag-text'),
+    ghost: v('--ghost-color'),
+    green: v('--green-surface'),
+    pin: v('--pin-color'),
+    dots: v('--dispersion-color'),
     tagBg: v('--tag-bg'),
     tagBorder: v('--tag-border'),
-    vignette: v('--vignette'),
-    path: [hexToRgb(v('--traj-start')), hexToRgb(v('--traj-mid')), hexToRgb(v('--traj-end'))],
-    mono: v('--mono'),
-    sans: v('--sans'),
+    tagText: v('--tag-text'),
+    path: [toRgb(v('--traj-start')), toRgb(v('--traj-mid')), toRgb(v('--traj-end'))],
+    font: v('--sans'),
   };
 }
 
 // Any CSS colour, normalised by the canvas to #rrggbb so short or named forms parse too.
-function hexToRgb(colour: string): [number, number, number] {
+function toRgb(colour: string): [number, number, number] {
   const ctx = document.createElement('canvas').getContext('2d');
   if (ctx) ctx.fillStyle = colour;
   const n = Number.parseInt(String(ctx?.fillStyle ?? colour).replace('#', ''), 16);
@@ -80,22 +100,17 @@ function niceCeil(value: number): number {
   return ROUND_FACTORS.find((f) => f * mag >= value)! * mag;
 }
 
-const lateralLabel = (v: number) => (Math.abs(v) < 1e-9 ? '0' : `${Math.abs(v)}${v < 0 ? 'L' : 'R'}`);
+const sideOf = (v: number) => (v > 0.05 ? ' R' : v < -0.05 ? ' L' : '');
 
-export interface WindIndicator {
-  /** Direction the wind blows from, rad (0 = headwind). */
-  readonly from: number;
-  /** m/s */
-  readonly speed: number;
-}
-
-/** A side or top view of the whole shot: flight, bounces and roll. */
+/**
+ * A side or top view of the whole shot, drawn to scale: one unit across is the same length as one unit up,
+ * so the true shape of the flight shows.
+ */
 export class FlightChart {
   private readonly canvas: HTMLCanvasElement;
   private readonly view: View;
   private theme: Theme | null = null;
-  private xMax = 0;
-  private yMax = 0;
+  private span = 0;
   private system: UnitSystem | null = null;
 
   constructor(canvas: HTMLCanvasElement, view: View) {
@@ -103,82 +118,107 @@ export class FlightChart {
     this.view = view;
   }
 
-  render(shot: Shot, system: UnitSystem, wind: WindIndicator): void {
-    const result = shot.flight;
+  render(shot: Shot, system: UnitSystem, wind: WindIndicator, extras: ChartExtras = {}): void {
     this.theme ??= readTheme();
     const theme = this.theme;
-    const ctx = this.prepare();
+    const ctx = this.prepare(theme);
     if (!ctx) return;
     const { width: W, height: H } = ctx.canvas.getBoundingClientRect();
-
-    const distance = unitFor('distance', system);
-    const vertical = this.view === 'side' ? unitFor('height', system) : distance;
-
-    const xs = new Float64Array(SAMPLES + 1);
-    const ys = new Float64Array(SAMPLES + 1);
-    const duration = shot.duration;
-    let maxX = 0;
-    let maxY = 0;
-    for (let i = 0; i <= SAMPLES; i++) {
-      const p = shot.positionAt((duration * i) / SAMPLES);
-      xs[i] = distance.fromSI(p.x);
-      ys[i] = vertical.fromSI(this.view === 'side' ? p.y : p.z);
-      maxX = Math.max(maxX, xs[i]);
-      maxY = Math.max(maxY, this.view === 'side' ? ys[i] : Math.abs(ys[i]));
-    }
-    this.updateScale(system, maxX, maxY);
-
     const plotW = W - PAD.left - PAD.right;
     const plotH = H - PAD.top - PAD.bottom;
-    const sx = (x: number) => PAD.left + (x / this.xMax) * plotW;
-    const sy =
-      this.view === 'side'
-        ? (y: number) => PAD.top + plotH - (y / this.yMax) * plotH
-        : (z: number) => PAD.top + plotH / 2 + (z / this.yMax) * (plotH / 2);
+    if (plotW <= 0 || plotH <= 0) return;
 
-    this.drawGrid(ctx, theme, H, plotW, plotH, sx, sy, distance.label, vertical.label);
+    const unit = unitFor('distance', system);
+    const d = unit.fromSI;
+    const pointsOf = (s: Shot) =>
+      Array.from({ length: SAMPLES + 1 }, (_, i) => {
+        const p = s.positionAt((s.duration * i) / SAMPLES);
+        return { x: d(p.x), v: d(this.view === 'side' ? p.y : p.z) };
+      });
+    const points = pointsOf(shot);
+    const ghost = extras.ghost ? pointsOf(extras.ghost) : [];
+    const pinX = extras.hole ? d(extras.hole.pin.x) : 0;
+
+    // One scale for both axes, chosen so the whole shot (and the pin) fits.
+    let needX = Math.max(10, pinX + 8, ...points.map((p) => p.x), ...ghost.map((p) => p.x)) * 1.06;
+    const needV = Math.max(4, ...points.map((p) => Math.abs(p.v)), ...ghost.map((p) => Math.abs(p.v))) * 1.25;
+    needX = Math.max(needX, (needV * plotW) / (this.view === 'side' ? plotH : plotH / 2));
+    this.updateSpan(system, niceCeil(needX));
+    const scale = plotW / this.span;
+    const sx = (x: number) => PAD.left + x * scale;
+    const sy = this.view === 'side' ? (v: number) => PAD.top + plotH - v * scale : (v: number) => PAD.top + plotH / 2 + v * scale;
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(PAD.left, PAD.top, plotW, plotH);
+    ctx.clip();
+    this.drawGrid(ctx, theme, plotW, plotH, scale, sx, sy);
+    if (this.view === 'top' && extras.hole) {
+      const g = extras.hole.green;
+      ctx.fillStyle = theme.green;
+      ctx.beginPath();
+      ctx.arc(sx(d(g.x)), sy(d(g.z)), d(g.radius) * scale, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+    if (this.view === 'top' && extras.dispersion) {
+      ctx.fillStyle = theme.dots;
+      for (const p of extras.dispersion) {
+        ctx.beginPath();
+        ctx.arc(sx(d(p.x)), sy(d(p.z)), 2.2, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+    }
+    if (ghost.length) {
+      ctx.strokeStyle = theme.ghost;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      ghost.forEach((p, i) => (i ? ctx.lineTo(sx(p.x), sy(p.v)) : ctx.moveTo(sx(p.x), sy(p.v))));
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    if (extras.hole) this.drawPin(ctx, theme, sx(pinX), sy(this.view === 'side' ? 0 : d(extras.hole.pin.z)), scale, unit.label);
 
     ctx.lineWidth = 2.25;
     ctx.lineCap = 'round';
-    for (let i = 1; i <= SAMPLES; i++) {
+    for (let i = 1; i < points.length; i++) {
       ctx.strokeStyle = pathColour(theme.path, i / SAMPLES);
       ctx.beginPath();
-      ctx.moveTo(sx(xs[i - 1]), sy(ys[i - 1]));
-      ctx.lineTo(sx(xs[i]), sy(ys[i]));
+      ctx.moveTo(sx(points[i - 1].x), sy(points[i - 1].v));
+      ctx.lineTo(sx(points[i].x), sy(points[i].v));
       ctx.stroke();
     }
+    ctx.restore();
+    this.drawAxes(ctx, theme, plotW, plotH, scale, niceStep(this.span, 7), sx, sy);
 
     ctx.fillStyle = theme.launch;
     ctx.beginPath();
     ctx.arc(sx(0), sy(0), 4, 0, 2 * Math.PI);
     ctx.fill();
 
+    const flight = shot.flight;
     if (this.view === 'side') {
-      const ax = distance.fromSI(result.apexPosition.x);
-      const ay = vertical.fromSI(result.apexPosition.y);
-      this.drawApex(ctx, theme, sx(ax), sy(ay), sy(0), `${ay.toFixed(1)} ${vertical.label}`);
+      const ax = d(flight.apexPosition.x);
+      const ay = d(flight.apexPosition.y);
+      this.drawApex(ctx, theme, sx(ax), sy(ay), sy(0), `${ay.toFixed(1)} ${unit.label} high`);
     }
-
-    if (result.landed) {
-      const lx = distance.fromSI(result.landingPosition.x);
-      const ly = this.view === 'side' ? 0 : distance.fromSI(result.landingPosition.z);
-      const label = this.view === 'side' ? `${distance.fromSI(result.carry).toFixed(1)} ${distance.label}` : '';
-      this.drawLanding(ctx, theme, sx(lx), sy(ly), label, W);
-
-      const rx = distance.fromSI(shot.restPosition.x);
-      const rz = distance.fromSI(shot.restPosition.z);
-      const restLabel =
+    if (flight.landed) {
+      const lv = this.view === 'side' ? 0 : d(flight.landingPosition.z);
+      this.drawCross(ctx, theme, sx(d(flight.landingPosition.x)), sy(lv));
+      const rest = shot.restPosition;
+      const rv = this.view === 'side' ? 0 : d(rest.z);
+      const label =
         this.view === 'side'
-          ? `${distance.fromSI(shot.total).toFixed(1)} ${distance.label} total`
-          : `${Math.abs(rz).toFixed(1)} ${distance.label} ${rz > 0.05 ? 'R' : rz < -0.05 ? 'L' : ''}`.trim();
-      this.drawRest(ctx, theme, sx(rx), sy(this.view === 'side' ? 0 : rz), restLabel, W);
+          ? `${d(flight.carry).toFixed(1)} carry, ${d(shot.total).toFixed(1)} total`
+          : `${Math.abs(d(rest.z)).toFixed(1)} ${unit.label}${sideOf(rest.z)}`;
+      this.drawRest(ctx, theme, sx(d(rest.x)), sy(rv), label, W);
     }
 
-    const next = this.drawTag(ctx, theme, PAD.left + 8, this.view === 'side' ? 'SIDE VIEW' : 'TOP VIEW');
+    const next = this.drawTag(ctx, theme, PAD.left + 8, this.view === 'side' ? 'SIDE VIEW · TO SCALE' : 'TOP VIEW · TO SCALE');
     if (this.view === 'top' && wind.speed > 0.05) this.drawWind(ctx, theme, wind, system, next);
   }
 
-  private prepare(): CanvasRenderingContext2D | null {
+  private prepare(theme: Theme): CanvasRenderingContext2D | null {
     const ctx = this.canvas.getContext('2d');
     if (!ctx) return null;
     const dpr = window.devicePixelRatio || 1;
@@ -190,89 +230,46 @@ export class FlightChart {
       this.canvas.height = h;
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = this.theme!.background;
+    ctx.fillStyle = theme.background;
     ctx.fillRect(0, 0, rect.width, rect.height);
     return ctx;
   }
 
-  // Axes only rescale when the shot outgrows them or shrinks a lot, so they don't jitter while dragging.
-  private updateScale(system: UnitSystem, maxX: number, maxY: number): void {
+  // The span only changes when the shot outgrows it or shrinks a lot, so it doesn't jitter while dragging.
+  private updateSpan(system: UnitSystem, need: number): void {
     if (system !== this.system) {
       this.system = system;
-      this.xMax = 0;
-      this.yMax = 0;
+      this.span = 0;
     }
-    const needX = niceCeil(Math.max(maxX * 1.08, 10));
-    if (needX > this.xMax || needX < this.xMax * 0.6) this.xMax = needX;
-    const minY = this.view === 'side' ? (system === 'imperial' ? 40 : 12) : 10;
-    const needY = niceCeil(Math.max(maxY * (this.view === 'side' ? 1.3 : 1.25), minY));
-    if (needY > this.yMax || needY < this.yMax * 0.6) this.yMax = needY;
+    if (need > this.span || need < this.span * 0.6) this.span = need;
   }
 
   private drawGrid(
     ctx: CanvasRenderingContext2D,
     theme: Theme,
-    H: number,
     plotW: number,
     plotH: number,
+    scale: number,
     sx: (x: number) => number,
-    sy: (y: number) => number,
-    xUnit: string,
-    yUnit: string,
+    sy: (v: number) => number,
   ): void {
-    ctx.save();
-    const glow = ctx.createRadialGradient(
-      PAD.left + plotW / 2, PAD.top + plotH / 2, 0,
-      PAD.left + plotW / 2, PAD.top + plotH / 2, Math.max(plotW, plotH) * 0.7,
-    );
-    glow.addColorStop(0, 'rgba(0,0,0,0)');
-    glow.addColorStop(1, theme.vignette);
-    ctx.fillStyle = glow;
-    ctx.fillRect(PAD.left, PAD.top, plotW, plotH);
-
+    const step = niceStep(this.span, 7);
     ctx.strokeStyle = theme.grid;
     ctx.lineWidth = 1;
-    ctx.setLineDash([2, 4]);
-    ctx.font = `10px ${theme.mono}`;
-    ctx.fillStyle = theme.tick;
-
-    const xStep = niceStep(this.xMax, 7);
-    ctx.textAlign = 'center';
-    for (let x = 0; x <= this.xMax + 1e-9; x += xStep) {
-      const px = sx(x);
+    for (let x = 0; x <= this.span + 1e-9; x += step) {
       ctx.beginPath();
-      ctx.moveTo(px, PAD.top);
-      ctx.lineTo(px, PAD.top + plotH);
+      ctx.moveTo(sx(x), PAD.top);
+      ctx.lineTo(sx(x), PAD.top + plotH);
       ctx.stroke();
-      ctx.fillText(String(Math.round(x)), px, PAD.top + plotH + 14);
     }
-
-    ctx.textAlign = 'right';
-    if (this.view === 'side') {
-      const yStep = niceStep(this.yMax, 5);
-      for (let y = 0; y <= this.yMax + 1e-9; y += yStep) {
-        const py = sy(y);
-        ctx.beginPath();
-        ctx.moveTo(PAD.left, py);
-        ctx.lineTo(PAD.left + plotW, py);
-        ctx.stroke();
-        ctx.fillText(String(Math.round(y)), PAD.left - 6, py + 3);
-      }
-    } else {
-      const yStep = niceStep(this.yMax, 2);
-      const count = Math.floor(this.yMax / yStep + 1e-9);
-      for (let k = -count; k <= count; k++) {
-        const z = k * yStep;
-        const py = sy(z);
-        ctx.beginPath();
-        ctx.moveTo(PAD.left, py);
-        ctx.lineTo(PAD.left + plotW, py);
-        ctx.stroke();
-        ctx.fillText(lateralLabel(z), PAD.left - 6, py + 3);
-      }
+    const rows = plotH / scale;
+    const from = this.view === 'side' ? 0 : -Math.floor(rows / 2 / step) * step;
+    for (let v = from; v <= (this.view === 'side' ? rows : rows / 2) + 1e-9; v += step) {
+      ctx.beginPath();
+      ctx.moveTo(PAD.left, sy(v));
+      ctx.lineTo(PAD.left + plotW, sy(v));
+      ctx.stroke();
     }
-    ctx.setLineDash([]);
-
     ctx.strokeStyle = theme.ground;
     ctx.lineWidth = this.view === 'side' ? 1.5 : 1;
     if (this.view === 'top') ctx.setLineDash([6, 5]);
@@ -281,27 +278,77 @@ export class FlightChart {
     ctx.lineTo(PAD.left + plotW, sy(0));
     ctx.stroke();
     ctx.setLineDash([]);
+  }
 
+  private drawAxes(
+    ctx: CanvasRenderingContext2D,
+    theme: Theme,
+    plotW: number,
+    plotH: number,
+    scale: number,
+    step: number,
+    sx: (x: number) => number,
+    sy: (v: number) => number,
+  ): void {
+    ctx.save();
     ctx.strokeStyle = theme.frame;
-    ctx.lineWidth = 1;
     ctx.strokeRect(PAD.left, PAD.top, plotW, plotH);
-
-    ctx.fillStyle = theme.axisLabel;
-    ctx.font = `10px ${theme.sans}`;
+    ctx.fillStyle = theme.tick;
+    ctx.font = `10px ${theme.font}`;
     ctx.textAlign = 'center';
-    ctx.fillText(`Distance (${xUnit})`, PAD.left + plotW / 2, H - 8);
+    for (let x = 0; x <= this.span + 1e-9; x += step) ctx.fillText(String(Math.round(x)), sx(x), PAD.top + plotH + 14);
+    ctx.textAlign = 'right';
+    const rows = plotH / scale;
+    if (this.view === 'side') {
+      for (let v = 0; v <= rows + 1e-9; v += step) ctx.fillText(String(Math.round(v)), PAD.left - 6, sy(v) + 3);
+    } else {
+      const k = Math.floor(rows / 2 / step);
+      for (let i = -k; i <= k; i++) {
+        const v = i * step;
+        ctx.fillText(v === 0 ? '0' : `${Math.abs(v)}${v < 0 ? 'L' : 'R'}`, PAD.left - 6, sy(v) + 3);
+      }
+    }
+    const unit = unitFor('distance', this.system ?? 'imperial').label;
+    ctx.fillStyle = theme.axisLabel;
+    ctx.textAlign = 'center';
+    ctx.fillText(`Distance (${unit})`, PAD.left + plotW / 2, PAD.top + plotH + 32);
     ctx.save();
     ctx.translate(12, PAD.top + plotH / 2);
     ctx.rotate(-Math.PI / 2);
-    ctx.fillText(this.view === 'side' ? `Height (${yUnit})` : `Lateral (${yUnit})`, 0, 0);
+    ctx.fillText(this.view === 'side' ? `Height (${unit})` : `Lateral (${unit})`, 0, 0);
     ctx.restore();
+    ctx.restore();
+  }
+
+  private drawPin(ctx: CanvasRenderingContext2D, theme: Theme, x: number, y: number, scale: number, unit: string): void {
+    ctx.save();
+    ctx.strokeStyle = theme.pin;
+    ctx.fillStyle = theme.pin;
+    ctx.lineWidth = 1.5;
+    if (this.view === 'side') {
+      // A flagstick is 7 ft (2.13 m) tall; draw it at true size but never shorter than 14 px.
+      const height = Math.max(14, (unit === 'yd' ? 2.33 : 2.13) * scale);
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x, y - height);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(x, y - height);
+      ctx.lineTo(x + 9, y - height + 3.5);
+      ctx.lineTo(x, y - height + 7);
+      ctx.fill();
+    } else {
+      ctx.beginPath();
+      ctx.arc(x, y, 3, 0, 2 * Math.PI);
+      ctx.fill();
+    }
     ctx.restore();
   }
 
   private drawApex(ctx: CanvasRenderingContext2D, theme: Theme, x: number, y: number, groundY: number, label: string): void {
     ctx.save();
     ctx.strokeStyle = theme.apex;
-    ctx.globalAlpha = 0.4;
+    ctx.globalAlpha = 0.45;
     ctx.setLineDash([2, 4]);
     ctx.beginPath();
     ctx.moveTo(x, y);
@@ -311,34 +358,28 @@ export class FlightChart {
     ctx.globalAlpha = 1;
     ctx.fillStyle = theme.apex;
     ctx.beginPath();
-    ctx.moveTo(x, y - 6);
-    ctx.lineTo(x + 5, y);
-    ctx.lineTo(x, y + 6);
-    ctx.lineTo(x - 5, y);
+    ctx.moveTo(x, y - 5);
+    ctx.lineTo(x + 4, y);
+    ctx.lineTo(x, y + 5);
+    ctx.lineTo(x - 4, y);
     ctx.closePath();
     ctx.fill();
-    ctx.font = `600 10px ${theme.mono}`;
+    ctx.font = `600 10px ${theme.font}`;
     ctx.textAlign = 'center';
-    ctx.fillText(label, x, y - 10);
+    ctx.fillText(label, x, y - 9);
     ctx.restore();
   }
 
-  private drawLanding(ctx: CanvasRenderingContext2D, theme: Theme, x: number, y: number, label: string, W: number): void {
+  private drawCross(ctx: CanvasRenderingContext2D, theme: Theme, x: number, y: number): void {
     ctx.save();
     ctx.strokeStyle = theme.land;
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(x - 5, y - 5);
-    ctx.lineTo(x + 5, y + 5);
-    ctx.moveTo(x + 5, y - 5);
-    ctx.lineTo(x - 5, y + 5);
+    ctx.moveTo(x - 4, y - 4);
+    ctx.lineTo(x + 4, y + 4);
+    ctx.moveTo(x + 4, y - 4);
+    ctx.lineTo(x - 4, y + 4);
     ctx.stroke();
-    ctx.fillStyle = theme.land;
-    ctx.font = `600 10px ${theme.mono}`;
-    const width = ctx.measureText(label).width;
-    const fitsRight = x + 10 + width < W - PAD.right;
-    ctx.textAlign = fitsRight ? 'left' : 'right';
-    ctx.fillText(label, fitsRight ? x + 10 : x - 10, this.view === 'side' ? y - 8 : y + 4);
     ctx.restore();
   }
 
@@ -348,33 +389,33 @@ export class FlightChart {
     ctx.strokeStyle = theme.launch;
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(x, y, 4.5, 0, 2 * Math.PI);
+    ctx.arc(x, y, 4, 0, 2 * Math.PI);
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = theme.launch;
-    ctx.font = `600 10px ${theme.mono}`;
+    ctx.font = `600 10px ${theme.font}`;
     const width = ctx.measureText(label).width;
     const fitsRight = x + 10 + width < W - PAD.right;
     ctx.textAlign = fitsRight ? 'left' : 'right';
-    ctx.fillText(label, fitsRight ? x + 10 : x - 10, this.view === 'side' ? y - 22 : y + 4);
+    ctx.fillText(label, fitsRight ? x + 10 : x - 10, this.view === 'side' ? y - 12 : y - 8);
     ctx.restore();
   }
 
-  /** Draws a tag in the plot's top-left corner row and returns the x where the next tag can start. */
+  /** Draws a tag in the plot's top-left row and returns the x where the next tag can start. */
   private drawTag(ctx: CanvasRenderingContext2D, theme: Theme, x: number, text: string, icon = 0): number {
     ctx.save();
-    ctx.font = `700 9px ${theme.mono}`;
+    ctx.font = `700 9px ${theme.font}`;
     const w = ctx.measureText(text).width + 16 + icon;
-    const y = PAD.top + 8;
+    const y = PAD.top - 22;
     ctx.fillStyle = theme.tagBg;
     ctx.strokeStyle = theme.tagBorder;
     ctx.beginPath();
-    ctx.roundRect(x, y, w, 18, 3);
+    ctx.roundRect(x, y, w, 17, 3);
     ctx.fill();
     ctx.stroke();
-    ctx.fillStyle = theme.accent;
+    ctx.fillStyle = theme.tagText;
     ctx.textAlign = 'left';
-    ctx.fillText(text, x + 8 + icon, y + 12.5);
+    ctx.fillText(text, x + 8 + icon, y + 12);
     ctx.restore();
     return x + w + 6;
   }
@@ -386,14 +427,14 @@ export class FlightChart {
     const dx = -Math.cos(wind.from);
     const dy = -Math.sin(wind.from);
     const cx = x + 13;
-    const cy = PAD.top + 17;
-    const len = 5.5;
+    const cy = PAD.top - 13.5;
+    const len = 5;
     const angle = Math.atan2(dy, dx);
     const tipX = cx + dx * len;
     const tipY = cy + dy * len;
     ctx.save();
-    ctx.strokeStyle = theme.accent;
-    ctx.fillStyle = theme.accent;
+    ctx.strokeStyle = theme.tagText;
+    ctx.fillStyle = theme.tagText;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.moveTo(cx - dx * len, cy - dy * len);
@@ -401,8 +442,8 @@ export class FlightChart {
     ctx.stroke();
     ctx.beginPath();
     ctx.moveTo(tipX, tipY);
-    ctx.lineTo(tipX - 4.5 * Math.cos(angle - 0.5), tipY - 4.5 * Math.sin(angle - 0.5));
-    ctx.lineTo(tipX - 4.5 * Math.cos(angle + 0.5), tipY - 4.5 * Math.sin(angle + 0.5));
+    ctx.lineTo(tipX - 4 * Math.cos(angle - 0.5), tipY - 4 * Math.sin(angle - 0.5));
+    ctx.lineTo(tipX - 4 * Math.cos(angle + 0.5), tipY - 4 * Math.sin(angle + 0.5));
     ctx.closePath();
     ctx.fill();
     ctx.restore();
