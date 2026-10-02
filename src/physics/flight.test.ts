@@ -177,3 +177,21 @@ describe('input validation', () => {
     expect(() => simulateFlight({ ...DRIVE, spinRate: -1 }, env())).toThrow(RangeError);
   });
 });
+
+describe('force breakdown', () => {
+  it('adds up to the same acceleration the integrator uses', async () => {
+    const { createContext, derivative, forceBreakdown } = await import('./dynamics.ts');
+    const { TOUR_BALL } = await import('./ball.ts');
+    const { launchState } = await import('./launch.ts');
+    const ctx = createContext(TOUR_BALL, env({ wind: { ...CALM, speed: 4, direction: 1 } }));
+    const y = launchState(DRIVE);
+    y[1] = 12;
+    const d = new Float64Array(9);
+    derivative(ctx, y, d);
+    const f = forceBreakdown(ctx, y);
+    const m = TOUR_BALL.mass;
+    expect((f.gravity.y + f.drag.y + f.lift.y) / m).toBeCloseTo(d[4], 9);
+    expect((f.drag.x + f.lift.x) / m).toBeCloseTo(d[3], 9);
+    expect((f.drag.z + f.lift.z) / m).toBeCloseTo(d[5], 9);
+  });
+});

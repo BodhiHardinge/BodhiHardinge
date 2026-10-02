@@ -1,6 +1,7 @@
 import { airDensity, airViscosity, type Atmosphere } from './atmosphere.ts';
 import { dragCoefficient, liftCoefficient, REFERENCE_DENSITY, type AeroModel, type Ball } from './ball.ts';
 import { windProfileFactor, type Wind } from './wind.ts';
+import { vec3, type Vec3 } from './vec3.ts';
 
 export const STANDARD_GRAVITY = 9.80665;
 
@@ -103,4 +104,49 @@ export function derivative(ctx: FlightContext, y: Float64Array, out: Float64Arra
   out[6] = -spinLoss * ox;
   out[7] = -spinLoss * oy;
   out[8] = -spinLoss * oz;
+}
+
+export interface ForceBreakdown {
+  /** N */
+  readonly gravity: Vec3;
+  /** N, opposite the airflow. */
+  readonly drag: Vec3;
+  /** N, Magnus force from spin, at right angles to the airflow. */
+  readonly lift: Vec3;
+  /** Wind velocity at the ball's height, m/s. */
+  readonly wind: Vec3;
+  readonly airspeed: number;
+  readonly spinRatio: number;
+  readonly reynolds: number;
+  readonly dragCoefficient: number;
+  readonly liftCoefficient: number;
+}
+
+/** The individual forces on the ball in a given state, for display. Same physics as derivative(). */
+export function forceBreakdown(ctx: FlightContext, y: Float64Array): ForceBreakdown {
+  const profile = windProfileFactor(ctx.wind, y[1]);
+  const wx = profile * ctx.windX;
+  const wz = profile * ctx.windZ;
+  const rx = y[3] - wx;
+  const ry = y[4];
+  const rz = y[5] - wz;
+  const airspeed = Math.hypot(rx, ry, rz);
+  const zero = vec3(0, 0, 0);
+  const gravity = vec3(0, -ctx.mass * ctx.gravity, 0);
+  if (airspeed < 1e-9) {
+    return { gravity, drag: zero, lift: zero, wind: vec3(wx, 0, wz), airspeed, spinRatio: 0, reynolds: 0, dragCoefficient: 0, liftCoefficient: 0 };
+  }
+  const [ux, uy, uz] = [rx / airspeed, ry / airspeed, rz / airspeed];
+  const [ox, oy, oz] = [y[6], y[7], y[8]];
+  const along = ox * ux + oy * uy + oz * uz;
+  const perpSpin = Math.hypot(ox - along * ux, oy - along * uy, oz - along * uz);
+  const spinRatio = (perpSpin * ctx.radius) / airspeed;
+  const reynolds = (ctx.density * airspeed * ctx.diameter) / ctx.viscosity;
+  const q = 0.5 * ctx.density * airspeed * airspeed * ctx.area;
+  const cd = dragCoefficient(ctx.aero, reynolds, spinRatio);
+  const cl = liftCoefficient(ctx.aero, spinRatio);
+  const drag = vec3(-q * cd * ux, -q * cd * uy, -q * cd * uz);
+  const k = perpSpin > 1e-9 ? (q * cl) / perpSpin : 0;
+  const lift = vec3(k * (oy * uz - oz * uy), k * (oz * ux - ox * uz), k * (ox * uy - oy * ux));
+  return { gravity, drag, lift, wind: vec3(wx, 0, wz), airspeed, spinRatio, reynolds, dragCoefficient: cd, liftCoefficient: cl };
 }

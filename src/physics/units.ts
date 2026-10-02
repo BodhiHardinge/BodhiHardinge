@@ -4,6 +4,7 @@ const MPH = 0.44704;
 const KMH = 1 / 3.6;
 const YARD = 0.9144;
 const FOOT = 0.3048;
+const INCH = 0.0254;
 const RPM = (2 * Math.PI) / 60;
 const DEGREE = Math.PI / 180;
 const ZERO_CELSIUS = 273.15;
@@ -19,6 +20,9 @@ export const toYards = (d: number): number => d / YARD;
 
 export const feet = (d: number): number => d * FOOT;
 export const toFeet = (d: number): number => d / FOOT;
+
+export const inches = (d: number): number => d * INCH;
+export const toInches = (d: number): number => d / INCH;
 
 export const rpm = (r: number): number => r * RPM;
 export const toRpm = (w: number): number => w / RPM;

@@ -1,31 +1,13 @@
 import { TOUR_BALL, type Ball } from './ball.ts';
 import { STANDARD_GRAVITY, type Environment } from './dynamics.ts';
 import { flyFrom, simulateFlight, type FlightResult, type FlightOptions } from './flight.ts';
+import { dropsIn, surfaceOn, type HoleLayout } from './hole.ts';
+import { SURFACES, type Surface } from './surfaces.ts';
 import type { LaunchConditions } from './launch.ts';
 import type { Trajectory } from './trajectory.ts';
 import { vec3, type Vec3 } from './vec3.ts';
 
-export interface Surface {
-  readonly name: string;
-  /** Scales the turf restitution curve: above 1 is firmer and bouncier. */
-  readonly firmness: number;
-  /** Ball-on-turf sliding friction coefficient. */
-  readonly friction: number;
-  /** Rolling deceleration, m/s². A green at Stimpmeter 11 is about 0.5. */
-  readonly rollingResistance: number;
-  /** How deep a pitch mark the ball makes, 0 (hard) to 1 (soft green), which tilts the bounce back. */
-  readonly softness: number;
-}
-
-// Tuned so a Tour drive rolls about 22 yd on fairway and 40 yd when firm, and a Tour 7-iron stops on a green.
-export const SURFACES = {
-  fairway: { name: 'Fairway', firmness: 1, friction: 0.45, rollingResistance: 4, softness: 1 },
-  firmFairway: { name: 'Firm fairway', firmness: 1.3, friction: 0.4, rollingResistance: 3, softness: 0.5 },
-  green: { name: 'Green', firmness: 1, friction: 0.4, rollingResistance: 0.5, softness: 1 },
-  rough: { name: 'Rough', firmness: 0.3, friction: 1, rollingResistance: 10, softness: 1 },
-} as const satisfies Record<string, Surface>;
-
-export type SurfaceKey = keyof typeof SURFACES;
+export { SURFACES, type Surface, type SurfaceKey } from './surfaces.ts';
 
 /** Normal coefficient of restitution of a ball on turf (Penner 2002), scaled by firmness. */
 export function turfRestitution(surface: Surface, normalSpeed: number): number {
@@ -114,7 +96,10 @@ interface GroundSegment {
 type Segment = AirSegment | GroundSegment;
 
 export interface ShotOptions extends FlightOptions {
+  /** Turf used everywhere, unless a hole is given. */
   readonly surface?: Surface;
+  /** A hole: turf then depends on where the ball lands, and the ball can drop in the cup. */
+  readonly hole?: HoleLayout;
 }
 
 /** A full shot: flight, bounces, slide and roll until the ball stops. */
@@ -123,13 +108,16 @@ export class Shot {
   readonly bounces: readonly FlightResult[];
   readonly restPosition: Vec3;
   readonly duration: number;
+  /** True when the ball finished in the cup. */
+  readonly holed: boolean;
   private readonly segments: readonly Segment[];
 
-  constructor(flight: FlightResult, bounces: FlightResult[], segments: Segment[], rest: Vec3) {
+  constructor(flight: FlightResult, bounces: FlightResult[], segments: Segment[], rest: Vec3, holed = false) {
     this.flight = flight;
     this.bounces = bounces;
     this.segments = segments;
     this.restPosition = rest;
+    this.holed = holed;
     const last = segments[segments.length - 1];
     this.duration = last.kind === 'air' ? last.start + last.trajectory.duration : last.start + last.duration;
   }
@@ -147,6 +135,29 @@ export class Shot {
   /** Distance right of the target line where the ball stops, m. */
   get totalOffline(): number {
     return this.restPosition.z;
+  }
+
+  /** Times the ball hits the ground: each bounce, then the start of the roll. */
+  get impactTimes(): number[] {
+    const firstGround = this.segments.findIndex((seg) => seg.kind === 'ground');
+    return this.segments
+      .filter((seg, i) => i > 0 && (seg.kind === 'air' || i === firstGround))
+      .map((seg) => seg.start);
+  }
+
+  /** Full state (position, velocity, spin) while the ball is in the air; null while it is on the ground. */
+  airStateAt(t: number): Float64Array | null {
+    const seg = this.segments[this.segmentIndex(t)];
+    return seg.kind === 'air' ? seg.trajectory.stateAt(Math.min(t - seg.start, seg.trajectory.duration)) : null;
+  }
+
+  /** Velocity at time t, m/s (finite difference of position). */
+  velocityAt(t: number): Vec3 {
+    const h = 1e-3;
+    const a = this.positionAt(Math.max(0, t - h));
+    const b = this.positionAt(Math.min(this.duration, t + h));
+    const dt = Math.min(this.duration, t + h) - Math.max(0, t - h) || 1;
+    return vec3((b.x - a.x) / dt, (b.y - a.y) / dt, (b.z - a.z) / dt);
   }
 
   /** What the ball is doing at time t. */
@@ -174,7 +185,8 @@ export class Shot {
 
 export function simulateShot(launch: LaunchConditions, env: Environment, options: ShotOptions = {}): Shot {
   const ball = options.ball ?? TOUR_BALL;
-  const surface = options.surface ?? SURFACES.fairway;
+  const hole = options.hole;
+  const turf = (x: number, z: number) => (hole ? surfaceOn(hole, x, z) : (options.surface ?? SURFACES.fairway));
   const flight = simulateFlight(launch, env, options);
   const segments: Segment[] = [{ kind: 'air', start: 0, trajectory: flight.trajectory }];
   const bounces: FlightResult[] = [];
@@ -182,9 +194,12 @@ export function simulateShot(launch: LaunchConditions, env: Environment, options
   let end = flight.trajectory.stateAt(flight.flightTime);
 
   if (!flight.landed || flight.carry === 0) return new Shot(flight, bounces, segments, flight.landingPosition);
+  if (hole && dropsIn(Math.hypot(end[0] - hole.pin.x, end[2] - hole.pin.z), 0)) {
+    return new Shot(flight, bounces, segments, vec3(hole.pin.x, end[1], hole.pin.z), true);
+  }
 
   for (let i = 0; i < MAX_BOUNCES; i++) {
-    const after = bounce(end, surface, ball);
+    const after = bounce(end, turf(end[0], end[2]), ball);
     if (after[4] < MIN_HOP_SPEED) {
       end = after;
       break;
@@ -197,8 +212,32 @@ export function simulateShot(launch: LaunchConditions, env: Environment, options
     if (!hop.landed) return new Shot(flight, bounces, segments, hop.landingPosition);
   }
 
-  const rest = roll(end, surface, ball, clock, segments);
+  const first = segments.length;
+  const rest = roll(end, turf(end[0], end[2]), ball, clock, segments);
+  if (hole) {
+    const holed = holeOut(segments, first, hole);
+    if (holed) return new Shot(flight, bounces, segments, holed, true);
+  }
   return new Shot(flight, bounces, segments, rest);
+}
+
+// Walks the ground segments; if the ball crosses the cup slowly enough, cuts the roll short there.
+function holeOut(segments: Segment[], first: number, hole: HoleLayout): Vec3 | null {
+  for (let i = first; i < segments.length; i++) {
+    const seg = segments[i];
+    if (seg.kind !== 'ground') continue;
+    for (let tau = 0; tau <= seg.duration; tau += 0.002) {
+      const x = seg.from.x + seg.velocity.x * tau + 0.5 * seg.acceleration.x * tau * tau;
+      const z = seg.from.z + seg.velocity.z * tau + 0.5 * seg.acceleration.z * tau * tau;
+      const speed = Math.hypot(seg.velocity.x + seg.acceleration.x * tau, seg.velocity.z + seg.acceleration.z * tau);
+      if (dropsIn(Math.hypot(x - hole.pin.x, z - hole.pin.z), speed)) {
+        segments.length = i + 1;
+        segments[i] = { ...seg, duration: tau };
+        return vec3(hole.pin.x, seg.from.y, hole.pin.z);
+      }
+    }
+  }
+  return null;
 }
 
 // Slides until friction makes the ball roll (contact point at rest), then rolls to a stop. Appends ground segments.
