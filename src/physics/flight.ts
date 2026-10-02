@@ -42,11 +42,16 @@ const ROOT_TOLERANCE = 1e-10;
 
 export function simulateFlight(launch: LaunchConditions, env: Environment, options: FlightOptions = {}): FlightResult {
   assertValidLaunch(launch);
+  return flyFrom(launchState(launch), env, options);
+}
+
+/** Flies a ball from any state (e.g. just after a bounce) until it comes down to the landing height. */
+export function flyFrom(initial: Float64Array, env: Environment, options: FlightOptions = {}): FlightResult {
   const ball = options.ball ?? TOUR_BALL;
   const maxTime = options.maxTime ?? 30;
   const ctx = createContext(ball, env);
   const f: Rhs = (y, dydt) => derivative(ctx, y, dydt);
-  const stepper = new AdaptiveStepper(f, launchState(launch), options.tolerance ?? DEFAULT_TOLERANCE, INITIAL_STEP, MAX_STEP);
+  const stepper = new AdaptiveStepper(f, initial, options.tolerance ?? DEFAULT_TOLERANCE, INITIAL_STEP, MAX_STEP);
   const ws = stepper.workspace;
   const height = env.landingHeight;
 
@@ -57,7 +62,7 @@ export function simulateFlight(launch: LaunchConditions, env: Environment, optio
   const beforeRate = new Float64Array(STATE_SIZE);
 
   let apexTime = 0;
-  let apex = vec3(0, 0, 0);
+  let apex = vec3(initial[0], initial[1], initial[2]);
   let apexFound = false;
   let landed = false;
 

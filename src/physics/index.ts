@@ -8,3 +8,4 @@ export * from './integrator.ts';
 export * from './trajectory.ts';
 export * from './flight.ts';
 export * from './vec3.ts';
+export * from './ground.ts';
