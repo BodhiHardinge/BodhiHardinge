@@ -43,8 +43,11 @@ function readTheme(): Theme {
   };
 }
 
-function hexToRgb(hex: string): [number, number, number] {
-  const n = Number.parseInt(hex.replace('#', ''), 16);
+// Any CSS colour, normalised by the canvas to #rrggbb so short or named forms parse too.
+function hexToRgb(colour: string): [number, number, number] {
+  const ctx = document.createElement('canvas').getContext('2d');
+  if (ctx) ctx.fillStyle = colour;
+  const n = Number.parseInt(String(ctx?.fillStyle ?? colour).replace('#', ''), 16);
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 

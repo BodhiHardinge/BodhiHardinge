@@ -123,6 +123,7 @@ export class ControlPanel {
 
       const range = document.createElement('input');
       range.type = 'range';
+      range.id = `${id}-slider`;
       range.setAttribute('aria-label', spec.label);
       const number = document.createElement('input');
       number.type = 'number';
