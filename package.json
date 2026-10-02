@@ -13,7 +13,8 @@
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.core.json",
     "validate": "node scripts/validate.ts",
-    "calibrate": "node scripts/calibrate.ts"
+    "calibrate": "node scripts/calibrate.ts",
+    "analyse": "node scripts/analyse.ts"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
