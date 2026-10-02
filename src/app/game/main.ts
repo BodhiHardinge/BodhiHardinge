@@ -22,6 +22,7 @@ import { slider, type Slider } from './slider.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
+document.body.classList.add('game');
 const settings = loadSettings();
 const round = new Round(SUN_CITY);
 
