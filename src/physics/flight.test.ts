@@ -137,6 +137,17 @@ describe('flight in air', () => {
     expect(topped.landed).toBe(true);
     expect(topped.carry).toBe(0);
   });
+
+  it('can lift off from a level launch when backspin lift beats gravity', () => {
+    const level = simulateFlight({ ...DRIVE, launchAngle: 0, spinRate: rpm(4000) }, env());
+    expect(level.landed).toBe(true);
+    expect(level.carry).toBeGreaterThan(100);
+  });
+
+  it('lands at once with a level launch and too little spin to lift off', () => {
+    const level = simulateFlight({ ...DRIVE, ballSpeed: mph(60), launchAngle: 0, spinRate: rpm(500) }, env());
+    expect(level.carry).toBe(0);
+  });
 });
 
 describe('trajectory interpolation', () => {

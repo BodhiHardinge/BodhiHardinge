@@ -58,31 +58,43 @@ export function simulateFlight(launch: LaunchConditions, env: Environment, optio
 
   let apexTime = 0;
   let apex = vec3(0, 0, 0);
-  let landed = stepper.y[4] <= 0 && height >= 0;
+  let apexFound = false;
+  let landed = false;
 
-  while (!landed && stepper.t < maxTime) {
+  while (stepper.t < maxTime) {
     before.set(stepper.y);
     beforeRate.set(stepper.dydt);
     const t0 = stepper.t;
     const h = stepper.advance();
+    const y = stepper.y;
 
-    if (before[4] > 0 && stepper.y[4] <= 0) {
+    if (!apexFound && before[4] > 0 && y[4] <= 0) {
       const tau = findCrossing(f, before, beforeRate, h, (s) => s[4], ws);
       apexTime = t0 + tau;
       apex = vec3(ws.next[0], ws.next[1], ws.next[2]);
+      apexFound = true;
     }
 
-    if (before[1] > height && stepper.y[1] <= height) {
+    if (before[1] > height && y[1] <= height) {
       const tau = findCrossing(f, before, beforeRate, h, (s) => s[1] - height, ws);
       times.push(t0 + tau);
       states.push(...ws.next);
       rates.push(...ws.k7);
       landed = true;
-    } else {
-      times.push(stepper.t);
-      states.push(...stepper.y);
-      rates.push(...stepper.dydt);
+      break;
     }
+
+    // Heading down from on or below the landing surface: the ball can never come down onto it.
+    const startsDown = t0 === 0 && before[1] <= height && y[1] < before[1];
+    const sinksBelow = apexFound && y[4] < 0 && y[1] < height;
+    if (startsDown || sinksBelow) {
+      landed = startsDown && height === 0;
+      break;
+    }
+
+    times.push(stepper.t);
+    states.push(...y);
+    rates.push(...stepper.dydt);
   }
 
   const trajectory = new Trajectory(times, states, rates);
