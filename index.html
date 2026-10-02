@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Golf ball flight simulator with a calibrated physics engine." />
+    <title>Ballflight Simulator</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='12' fill='%230dd8b2'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <div id="app">
+      <aside id="controls" aria-label="Shot settings">
+        <header class="wordmark">
+          <span class="wordmark-title">Ballflight</span>
+          <span class="wordmark-sub">Physics Engine</span>
+        </header>
+        <div class="toolbar">
+          <div class="segmented" role="group" aria-label="Units">
+            <button type="button" data-units="imperial" aria-pressed="true">Yards</button>
+            <button type="button" data-units="metric" aria-pressed="false">Metres</button>
+          </div>
+          <label class="preset">
+            <span>Tour average</span>
+            <select id="preset"></select>
+          </label>
+        </div>
+        <div id="params"></div>
+      </aside>
+
+      <main id="vis">
+        <div class="screen" id="side-wrap">
+          <canvas id="side-cv" role="img" aria-label="Side view of the ball flight"></canvas>
+        </div>
+        <div class="screen" id="top-wrap">
+          <canvas id="top-cv" role="img" aria-label="Top view of the ball flight"></canvas>
+        </div>
+        <section id="readout" aria-label="Shot results"></section>
+      </main>
+    </div>
+    <script type="module" src="/src/app/main.ts"></script>
+  </body>
+</html>
