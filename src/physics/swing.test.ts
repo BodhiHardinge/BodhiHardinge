@@ -46,3 +46,15 @@ describe('swing kinematics', () => {
     expect(new Swing(d, clubFor('7 Iron')).poseAt(0).head.y).toBeCloseTo(0, 9);
   });
 });
+
+describe('putting stroke', () => {
+  const spec = clubFor('Putter');
+  const swing = new Swing({ clubSpeed: 2, attackAngle: degrees(2), clubPath: 0, faceAngle: 0, dynamicLoft: degrees(4) }, spec);
+
+  it('meets the ball at the putt speed with a short, quick stroke', () => {
+    const v = swing.headVelocity(0);
+    expect(Math.hypot(v.x, v.y, v.z)).toBeCloseTo(2, 3);
+    expect(swing.downswing).toBeLessThan(0.6);
+    for (let t = swing.start; t <= swing.end; t += 0.01) expect(swing.poseAt(t).head.y).toBeLessThan(0.5);
+  });
+});

@@ -13,7 +13,7 @@ export interface ClubSpec {
   readonly attackAngle: number;
   /** How steep the swing plane is from the ground, rad. */
   readonly plane: number;
-  readonly head: 'driver' | 'wood' | 'iron';
+  readonly head: 'driver' | 'wood' | 'iron' | 'putter';
 }
 
 const club = (
@@ -40,6 +40,9 @@ export const CLUBS: readonly ClubSpec[] = [
   club('Lob Wedge', 35, 60, 1.10, -5.0, 62, 'iron'),
 ];
 
+/** Kept out of CLUBS so loft matching on full shots never picks it. */
+export const PUTTER: ClubSpec = club('Putter', 34, 3, 1.45, 2, 72, 'putter');
+
 const ALIASES: Record<string, string> = { pw: 'Pitching Wedge', '3-wood': '3 Wood', '5-wood': '5 Wood', hybrid: '3 Hybrid' };
 
 /** Finds a club by name ("7 Iron", "7-iron", "PW"), or the club whose loft best suits the launch. */
@@ -47,6 +50,7 @@ export function clubFor(name: string | null, launch?: LaunchConditions): ClubSpe
   if (name) {
     const key = name.trim().toLowerCase();
     const wanted = (ALIASES[key] ?? key).replace('-', ' ').toLowerCase();
+    if (wanted === 'putter') return PUTTER;
     const found = CLUBS.find((c) => c.name.toLowerCase() === wanted);
     if (found) return found;
   }

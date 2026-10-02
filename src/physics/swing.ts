@@ -45,6 +45,7 @@ export class Swing {
   private readonly up: Vec3;
   private readonly along: Vec3;
   private readonly delivery: Delivery;
+  private readonly hingeTop: number;
 
   constructor(delivery: Delivery, spec: ClubSpec, ball: Vec3 = vec3(0, 0, 0)) {
     this.delivery = delivery;
@@ -65,9 +66,14 @@ export class Swing {
     const r = this.radial(this.impactAngle);
     this.hubPoint = vec3(ball.x - this.radius * r.x, ball.y - this.radius * r.y, ball.z - this.radius * r.z);
 
-    const backswing = spec.head === 'driver' ? 4.1 : spec.head === 'wood' ? 3.9 : 3.5 - (spec.loft - 0.38) * 1.2;
+    // A putting stroke is a pendulum whose length grows with pace, with no wrist hinge.
+    const putter = spec.head === 'putter';
+    const backswing = putter
+      ? Math.min(0.9, Math.max(0.12, 0.08 + 0.1 * delivery.clubSpeed))
+      : spec.head === 'driver' ? 4.1 : spec.head === 'wood' ? 3.9 : 3.5 - (spec.loft - 0.38) * 1.2;
+    this.hingeTop = putter ? 0 : HINGE_AT_TOP;
     this.topAngle = this.impactAngle - backswing;
-    this.finishAngle = this.impactAngle + 4.2;
+    this.finishAngle = this.impactAngle + (putter ? 1.2 * backswing : 4.2);
     this.angularSpeed = delivery.clubSpeed / this.radius;
     // A smooth acceleration averages two thirds of its peak speed.
     this.downswing = (1.5 * backswing) / this.angularSpeed;
@@ -135,9 +141,9 @@ export class Swing {
 
   private hinge(t: number): number {
     const down = this.downswing;
-    if (t <= -down) return HINGE_AT_TOP * smooth((t + down + BACKSWING) / BACKSWING);
-    if (t <= 0) return HINGE_AT_TOP * (1 - smooth((t + down) / down / 0.55 - 0.8));
-    return -1.1 * smooth(t / FOLLOW_THROUGH);
+    if (t <= -down) return this.hingeTop * smooth((t + down + BACKSWING) / BACKSWING);
+    if (t <= 0) return this.hingeTop * (1 - smooth((t + down) / down / 0.55 - 0.8));
+    return this.hingeTop === 0 ? 0 : -1.1 * smooth(t / FOLLOW_THROUGH);
   }
 
   private faceAt(arm: number): Vec3 {

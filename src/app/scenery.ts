@@ -52,8 +52,11 @@ export function groundLayer<T extends THREE.Mesh>(mesh: T, order: number): T {
   return mesh;
 }
 
-/** Sky, light, rough, striped fairway, tee, pines and azaleas. */
-export function buildRange(scene: THREE.Scene): void {
+/**
+ * Sky, light, rough, striped fairway, tee, pines and azaleas. Sky and light go on the scene; the ground and
+ * planting go in `world`, which a game moves so each shot is played from the origin.
+ */
+export function buildRange(scene: THREE.Scene, world: THREE.Object3D = scene, options: { fairway?: boolean } = {}): void {
   scene.background = canvasTexture(2, 256, (ctx) => {
     const sky = ctx.createLinearGradient(0, 0, 0, 256);
     sky.addColorStop(0, COLOURS.skyTop);
@@ -87,7 +90,7 @@ export function buildRange(scene: THREE.Scene): void {
       }),
     );
     rough.rotation.x = -Math.PI / 2;
-    scene.add(groundLayer(rough, 0));
+    world.add(groundLayer(rough, 0));
 
     const length = 480;
     const stripes = canvasTexture(64, 4, (ctx) => {
@@ -101,12 +104,12 @@ export function buildRange(scene: THREE.Scene): void {
     const fairway = new THREE.Mesh(new THREE.PlaneGeometry(length, 48), new THREE.MeshLambertMaterial({ map: stripes }));
     fairway.rotation.x = -Math.PI / 2;
     fairway.position.set(length / 2 - 15, 0, 0);
-    scene.add(groundLayer(fairway, 1));
+    if (options.fairway !== false) world.add(groundLayer(fairway, 1));
 
     const tee = new THREE.Mesh(new THREE.PlaneGeometry(8, 8), new THREE.MeshLambertMaterial({ color: COLOURS.tee }));
     tee.rotation.x = -Math.PI / 2;
     tee.position.set(0, 0, 0);
-    scene.add(groundLayer(tee, 2));
+    world.add(groundLayer(tee, 2));
 
     const rnd = random(1934);
     const spots: THREE.Matrix4[] = [];
@@ -128,7 +131,7 @@ export function buildRange(scene: THREE.Scene): void {
     for (const [geometry, colour] of [[crown, COLOURS.pine], [trunk, COLOURS.trunk]] as const) {
       const trees = new THREE.InstancedMesh(geometry, new THREE.MeshLambertMaterial({ color: colour }), spots.length);
       spots.forEach((m, i) => trees.setMatrixAt(i, m));
-      scene.add(trees);
+      world.add(trees);
     }
 
     const bushes = new THREE.InstancedMesh(
@@ -145,7 +148,7 @@ export function buildRange(scene: THREE.Scene): void {
         new THREE.Vector3(s * 1.6, s, s * 1.2),
       ));
     }
-    scene.add(bushes);
+    world.add(bushes);
   }
 
 /** Yardage posts every 50 units either side of the fairway, labelled in the chosen units. */
@@ -194,7 +197,7 @@ export function buildMarkers(group: THREE.Group, system: UnitSystem): void {
   }
 
 /** Green, fringe, a real cup, the depth plane with its hole, and a seven-foot flagstick with a yellow flag. */
-export function buildHole(hole: HoleLayout): THREE.Group {
+export function buildHole(hole: HoleLayout, options: { fairway?: boolean } = {}): THREE.Group {
   const group = new THREE.Group();
   const flat = (geometry: THREE.BufferGeometry, material: THREE.Material, order: number, x: number, z: number) => {
     const mesh = groundLayer(new THREE.Mesh(geometry, material), order);
@@ -203,6 +206,20 @@ export function buildHole(hole: HoleLayout): THREE.Group {
     group.add(mesh);
     return mesh;
   };
+  if (options.fairway) {
+    const { from, to, halfWidth } = hole.fairway;
+    const length = Math.hypot(to.x - from.x, to.z - from.z);
+    const mown = canvasTexture(64, 4, (ctx) => {
+      ctx.fillStyle = COLOURS.fairwayLight;
+      ctx.fillRect(0, 0, 32, 4);
+      ctx.fillStyle = COLOURS.fairwayDark;
+      ctx.fillRect(32, 0, 32, 4);
+    });
+    mown.wrapS = THREE.RepeatWrapping;
+    mown.repeat.set(length / 24, 1);
+    const strip = flat(new THREE.PlaneGeometry(length, halfWidth * 2), new THREE.MeshLambertMaterial({ map: mown }), 1, (from.x + to.x) / 2, (from.z + to.z) / 2);
+    strip.rotation.z = -Math.atan2(to.z - from.z, to.x - from.x);
+  }
   const g = hole.green;
   flat(new THREE.CircleGeometry(g.radius + 1.2, 64), new THREE.MeshLambertMaterial({ color: COLOURS.fringe }), 3, g.x, g.z);
   const stripes = canvasTexture(64, 4, (ctx) => {

@@ -29,11 +29,11 @@ describe('the hole', () => {
 
   it('holes a ball that rolls slowly over the cup', () => {
     const farGreen = { x: 1000, z: 0, radius: 1 };
-    const miss = simulateShot(WEDGE, env, { hole: { pin: { x: 1000, z: 0 }, green: farGreen, fairwayHalfWidth: 22 } });
+    const miss = simulateShot(WEDGE, env, { hole: { pin: { x: 1000, z: 0 }, green: farGreen, fairway: makeHole(130).fairway } });
     const rest = miss.restPosition;
     const direction = Math.atan2(rest.z, rest.x);
     const pin = { x: rest.x - 0.1 * Math.cos(direction), z: rest.z - 0.1 * Math.sin(direction) };
-    const shot = simulateShot(WEDGE, env, { hole: { pin, green: farGreen, fairwayHalfWidth: 22 } });
+    const shot = simulateShot(WEDGE, env, { hole: { pin, green: farGreen, fairway: makeHole(130).fairway } });
     expect(shot.holed).toBe(true);
     expect(shot.restPosition.x).toBeCloseTo(pin.x, 9);
     expect(shot.duration).toBeLessThan(miss.duration + 1);

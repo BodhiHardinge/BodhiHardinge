@@ -4,7 +4,7 @@ import { TOUR_BALL } from '../physics/ball.ts';
 import type { ClubSpec } from '../physics/club.ts';
 import { createContext, forceBreakdown, STANDARD_GRAVITY, type Environment, type FlightContext } from '../physics/dynamics.ts';
 import type { Shot } from '../physics/ground.ts';
-import type { HoleLayout } from '../physics/hole.ts';
+import { holeInFrame, WORLD_FRAME, type Frame, type HoleLayout } from '../physics/hole.ts';
 import type { Swing } from '../physics/swing.ts';
 import { toRpm } from '../physics/units.ts';
 import { vec3, type Vec3 } from '../physics/vec3.ts';
@@ -30,6 +30,19 @@ export interface SceneInput {
   readonly system: UnitSystem;
   /** Landing points of the selected club's recorded shots, m. */
   readonly dispersion: readonly { readonly x: number; readonly z: number }[];
+  /** Where this shot is played from, in world coordinates: the shot itself is in this frame. Default: the tee. */
+  readonly frame?: Frame;
+  /** A shot drawn as a dotted line before the swing: what a perfect strike would do. */
+  readonly preview?: Shot | null;
+  /** Show the golfer at address, ready to swing, instead of the shot at rest. */
+  readonly atAddress?: boolean;
+}
+
+export interface CourseViewOptions {
+  /** Yardage posts along the range. */
+  readonly markers?: boolean;
+  /** Draw the hole's own fairway instead of the range's long straight one. */
+  readonly holeFairway?: boolean;
 }
 
 const BALL_RADIUS = TOUR_BALL.diameter / 2;
@@ -71,6 +84,8 @@ interface Tracer {
 export class CourseView {
   onPhase: (phase: string) => void = () => {};
   onCameraChange: (mode: CameraMode) => void = () => {};
+  /** Called when a hit has played through to the ball stopping. */
+  onFinish: () => void = () => {};
 
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
@@ -90,6 +105,10 @@ export class CourseView {
   private ghostTracer: Tracer | null = null;
   private tourTracer: Tracer | null = null;
   private readonly trailGroup = new THREE.Group();
+  /** Ground, planting and the hole, moved so the current shot frame sits at the origin. */
+  private readonly world = new THREE.Group();
+  private readonly options: CourseViewOptions;
+  private preview: THREE.Line | null = null;
   private readonly keys = new Set<string>();
 
   private input: SceneInput | null = null;
@@ -110,7 +129,8 @@ export class CourseView {
   private showTrails = false;
   private readonly followFrom = new THREE.Vector3();
 
-  constructor(canvas: HTMLCanvasElement, container: HTMLElement, legend: HTMLElement) {
+  constructor(canvas: HTMLCanvasElement, container: HTMLElement, legend: HTMLElement, options: CourseViewOptions = {}) {
+    this.options = options;
     this.container = container;
     this.legend = legend;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, logarithmicDepthBuffer: true });
@@ -118,8 +138,9 @@ export class CourseView {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
 
-    buildRange(this.scene);
-    this.scene.add(this.markers, this.golfer.group, this.trailGroup);
+    buildRange(this.scene, this.world, { fairway: !options.holeFairway });
+    this.scene.add(this.world, this.markers, this.golfer.group, this.trailGroup);
+    this.markers.visible = options.markers !== false;
 
     this.ball = new THREE.Mesh(
       new THREE.SphereGeometry(BALL_RADIUS, 24, 16),
@@ -217,13 +238,20 @@ export class CourseView {
         this.requestRender();
       });
     }
-    const key = `${input.hole.pin.x},${input.hole.pin.z}`;
+    const key = `${input.hole.pin.x},${input.hole.pin.z},${input.hole.fairway.from.x},${input.hole.fairway.to.x}`;
     if (key !== this.holeKey) {
       this.holeKey = key;
-      if (this.holeGroup) this.scene.remove(this.holeGroup);
-      this.holeGroup = buildHole(input.hole);
-      this.scene.add(this.holeGroup);
+      if (this.holeGroup) this.world.remove(this.holeGroup);
+      this.holeGroup = buildHole(input.hole, { fairway: this.options.holeFairway });
+      this.world.add(this.holeGroup);
     }
+    // Place the world so the shot frame's origin is at the scene origin, facing +x.
+    const frame = input.frame ?? WORLD_FRAME;
+    const c = Math.cos(frame.heading);
+    const sn = Math.sin(frame.heading);
+    this.world.rotation.y = frame.heading;
+    this.world.position.set(-(frame.x * c + frame.z * sn), 0, -(-frame.x * sn + frame.z * c));
+    this.buildPreview(input.preview ?? null);
     this.golfer.setClub(input.club);
     this.tracer = this.replaceTracer(this.tracer, input.shot, '#f4d35e', 1);
     this.ghostTracer = this.replaceTracer(this.ghostTracer, input.ghost, '#ffffff', 0.55);
@@ -232,7 +260,7 @@ export class CourseView {
     this.buildDispersion(input.dispersion);
     this.landing.position.set(input.shot.flight.landingPosition.x, 0.03, input.shot.flight.landingPosition.z);
     this.playing = false;
-    this.clock = this.endTime();
+    this.clock = input.atAddress ? input.swing.start : this.endTime();
     this.showAt(this.clock, 0);
     this.frameCamera(true);
   }
@@ -303,6 +331,7 @@ export class CourseView {
       this.clock = Math.min(end, this.clock + dt);
       if (this.clock >= end) this.playing = false;
       this.showAt(this.clock, dt);
+      if (!this.playing) this.onFinish();
       if (this.mode === 'follow') this.frameCamera(false);
     }
     this.draw();
@@ -386,6 +415,35 @@ export class CourseView {
     }
     tracer.ground.visible = visible;
     tracer.ground.geometry.setDrawRange(0, Math.max(0, index - tracer.flightSamples + 1));
+  }
+
+  private buildPreview(shot: Shot | null): void {
+    if (this.preview) {
+      this.scene.remove(this.preview);
+      this.preview.geometry.dispose();
+      this.preview = null;
+    }
+    if (!shot) return;
+    const points: THREE.Vector3[] = [];
+    for (let t = 0; t <= shot.duration; t += 1 / 30) {
+      const p = shot.positionAt(t);
+      points.push(new THREE.Vector3(p.x, Math.max(p.y, 0) + 0.06, p.z));
+    }
+    const rest = shot.restPosition;
+    points.push(new THREE.Vector3(rest.x, 0.06, rest.z));
+    this.preview = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(points),
+      new THREE.LineDashedMaterial({ color: '#ffffff', dashSize: 1.2, gapSize: 1.0, transparent: true, opacity: 0.6, toneMapped: false }),
+    );
+    this.preview.computeLineDistances();
+    this.scene.add(this.preview);
+    this.requestRender();
+  }
+
+  /** Shows or hides the dotted perfect-strike line. */
+  setPreviewVisible(visible: boolean): void {
+    if (this.preview) this.preview.visible = visible;
+    this.requestRender();
   }
 
   private buildTrails(shots: readonly Shot[]): void {
@@ -535,7 +593,8 @@ export class CourseView {
     if (!input) return;
     const { shot } = input;
     const rest = shot.restPosition;
-    const reach = Math.max(40, shot.total, input.hole.pin.x);
+    const pin = holeInFrame(input.hole, input.frame ?? WORLD_FRAME).pin;
+    const reach = Math.max(40, shot.total, Math.min(pin.x, 320));
     const apex = shot.flight.apexPosition.y;
     const target = new THREE.Vector3();
     const position = new THREE.Vector3();

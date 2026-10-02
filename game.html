@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="description" content="Play Sun City, Yanchep, on a calibrated golf physics engine." />
+    <title>Sun City Golf</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%23006747'/%3E%3Cpath d='M14 8v15' stroke='%23fffdf8' stroke-width='2'/%3E%3Cpath d='M15 8l7 3-7 3z' fill='%23f4d35e'/%3E%3C/svg%3E"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Libre+Caslon+Display&family=Libre+Franklin:wght@400;500;600;700&display=swap"
+    />
+  </head>
+  <body class="game">
+    <div id="app">
+      <header class="masthead">
+        <div class="wordmark">
+          <span class="wordmark-title">Sun City</span>
+          <span class="wordmark-sub">Yanchep · Western Australia</span>
+        </div>
+        <div class="masthead-tools">
+          <a class="masthead-link" href="./index.html">Simulator</a>
+          <button type="button" id="open-settings" class="masthead-link">Settings</button>
+          <div class="segmented" role="group" aria-label="Units">
+            <button type="button" data-units="metric" aria-pressed="true">Metres</button>
+            <button type="button" data-units="imperial" aria-pressed="false">Yards</button>
+          </div>
+        </div>
+      </header>
+
+      <aside id="controls" aria-label="Your shot">
+        <section class="hud" id="hud" aria-live="polite"></section>
+
+        <h2 class="section-head">Setup</h2>
+        <label class="field">
+          <span>Club</span>
+          <select id="club"></select>
+        </label>
+        <p class="hint" id="club-hint"></p>
+        <div id="setup"></div>
+        <button type="button" id="reset-setup" class="text-button">Reset to stock setup</button>
+
+        <h2 class="section-head">If you time it perfectly</h2>
+        <dl class="predict" id="predict"></dl>
+
+        <button type="button" id="swing" class="swing-button">Swing <kbd>Space</kbd></button>
+      </aside>
+
+      <main id="vis" class="game-vis">
+        <section class="course" aria-label="3D view of the hole">
+          <canvas id="course-cv"></canvas>
+          <div class="course-bar">
+            <div class="course-title"><span id="hole-title">Hole 1</span><span id="course-phase">Ready</span></div>
+            <div class="course-tools">
+              <div class="cameras" role="group" aria-label="Camera">
+                <button type="button" data-camera="tee" aria-pressed="true">Behind</button>
+                <button type="button" data-camera="swing" aria-pressed="false">Swing</button>
+                <button type="button" data-camera="follow" aria-pressed="false">Follow</button>
+                <button type="button" data-camera="above" aria-pressed="false">Above</button>
+              </div>
+              <div class="cameras" role="group" aria-label="Layers">
+                <button type="button" id="layer-preview" aria-pressed="true">Perfect line</button>
+                <button type="button" id="layer-forces" aria-pressed="false">Forces</button>
+              </div>
+            </div>
+          </div>
+          <div class="pip" id="pip-legend" hidden></div>
+
+          <div class="lane" id="lane" hidden>
+            <div class="lane-track" id="lane-track"></div>
+            <div class="lane-phase" id="lane-phase"></div>
+            <div class="lane-call" id="lane-call" aria-live="assertive"></div>
+          </div>
+
+          <div class="result" id="result" hidden></div>
+          <p class="fly-hint" id="fly-hint">Arrow keys play the swing · Drag to orbit · W A S D to fly</p>
+        </section>
+
+        <section class="board scorecard" aria-label="Scorecard">
+          <div class="board-head">
+            <h2>Scorecard</h2>
+            <span class="board-sub" id="card-sub"></span>
+          </div>
+          <div class="board-scroll">
+            <table id="card"></table>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="settings" class="shot-dialog settings-dialog" aria-label="Settings"></dialog>
+    <script type="module" src="/src/app/game/main.ts"></script>
+  </body>
+</html>

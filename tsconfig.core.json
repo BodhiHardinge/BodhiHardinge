@@ -4,6 +4,6 @@
     "lib": ["es2022"],
     "types": []
   },
-  "include": ["src/physics", "src/analysis"],
+  "include": ["src/physics", "src/analysis", "src/game"],
   "exclude": ["**/*.test.ts"]
 }

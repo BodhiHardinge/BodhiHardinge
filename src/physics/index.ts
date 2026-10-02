@@ -12,3 +12,5 @@ export * from './ground.ts';
 export * from './hole.ts';
 export * from './club.ts';
 export * from './swing.ts';
+export * from './impact.ts';
+export * from './setup.ts';

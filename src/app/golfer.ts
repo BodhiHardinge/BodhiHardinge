@@ -85,7 +85,7 @@ export class Golfer {
   }
 
   setClub(spec: ClubSpec): void {
-    const size = spec.head === 'driver' ? [0.115, 0.06, 0.11] : spec.head === 'wood' ? [0.1, 0.04, 0.08] : [0.075, 0.05, 0.018];
+    const size = spec.head === 'driver' ? [0.115, 0.06, 0.11] : spec.head === 'wood' ? [0.1, 0.04, 0.08] : spec.head === 'putter' ? [0.1, 0.025, 0.03] : [0.075, 0.05, 0.018];
     this.clubHead.geometry.dispose();
     this.clubHead.geometry = new THREE.BoxGeometry(size[0], size[1], size[2]).translate(size[0] * 0.35, size[1] * 0.4, -size[2] * 0.45);
   }
