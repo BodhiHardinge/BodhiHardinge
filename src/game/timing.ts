@@ -1,20 +1,25 @@
 import type { Delivery } from '../physics/club.ts';
-import { CLEAN_CONTACT, type Contact } from '../physics/impact.ts';
+import { CENTRED_STRIKE, type Strike } from '../physics/contact.ts';
 import { degrees } from '../physics/units.ts';
 
 export type Arrow = 'up' | 'down' | 'left' | 'right';
 export const ARROWS: readonly Arrow[] = ['left', 'up', 'down', 'right'];
 
 /** The swing moments the player has to time. Each one controls part of the delivery. */
-export type Phase = 'takeaway' | 'top' | 'transition' | 'release' | 'strike';
+export type Phase = 'takeaway' | 'set' | 'top' | 'transition' | 'release' | 'strike';
 
 export const PHASE_INFO: Record<Phase, { label: string; controls: string }> = {
   takeaway: { label: 'Takeaway', controls: 'Plane: early snatches it steep and outside' },
+  set: { label: 'Wrist set', controls: 'Lag: late sets less hinge, losing speed and adding loft' },
   top: { label: 'Top', controls: 'Tempo: early rushes and loses speed' },
   transition: { label: 'Transition', controls: 'Path: early comes over the top' },
   release: { label: 'Release', controls: 'Face: early closes it, late leaves it open' },
-  strike: { label: 'Strike', controls: 'Contact: early hits it fat, late hits it thin' },
+  strike: { label: 'Strike', controls: 'Low point: early hits it fat, late hits it thin' },
 };
+
+// Beat times in s. A full swing keeps the classic 3:1 backswing-to-downswing tempo.
+const BEAT: Record<Phase, number> = { takeaway: 0, set: 0.45, top: 0.9, transition: 1.25, release: 1.6, strike: 1.9 };
+const PUTT_BEAT: Partial<Record<Phase, number>> = { takeaway: 0, top: 0.7, strike: 1.3 };
 
 export type Grade = 'perfect' | 'great' | 'good' | 'poor' | 'miss' | 'wrong';
 
@@ -26,33 +31,51 @@ export interface Windows {
   readonly poor: number;
 }
 
+export type Difficulty = 'easy' | 'medium' | 'hard' | 'pro';
+
 export interface TimingSettings {
-  readonly mode: 'simple' | 'advanced';
+  readonly difficulty: Difficulty;
   readonly windows: Windows;
   /** How long an arrow takes to travel down the lane to the line, s. */
   readonly laneTime: number;
   /** Stretches (above 1) or quickens the gaps between prompts. */
   readonly tempo: number;
+  /** Swing moments that get an arrow, in swing order. */
+  readonly phases: readonly Phase[];
+  /** Moments that need two arrows pressed together. */
+  readonly doubles: readonly Phase[];
+  readonly puttPhases: readonly Phase[];
 }
 
-export const SIMPLE: TimingSettings = {
-  mode: 'simple',
-  windows: { perfect: 0.07, great: 0.12, good: 0.18, poor: 0.26 },
-  laneTime: 1.6,
-  tempo: 1,
+export const TIMING_PRESETS: Record<Difficulty, TimingSettings> = {
+  easy: {
+    difficulty: 'easy', windows: { perfect: 0.09, great: 0.15, good: 0.22, poor: 0.32 }, laneTime: 2, tempo: 1.15,
+    phases: ['top', 'release', 'strike'], doubles: [], puttPhases: ['strike'],
+  },
+  medium: {
+    difficulty: 'medium', windows: { perfect: 0.06, great: 0.11, good: 0.17, poor: 0.25 }, laneTime: 1.6, tempo: 1,
+    phases: ['top', 'transition', 'release', 'strike'], doubles: [], puttPhases: ['top', 'strike'],
+  },
+  hard: {
+    difficulty: 'hard', windows: { perfect: 0.04, great: 0.08, good: 0.12, poor: 0.18 }, laneTime: 1.2, tempo: 1,
+    phases: ['takeaway', 'top', 'transition', 'release', 'strike'], doubles: [], puttPhases: ['takeaway', 'top', 'strike'],
+  },
+  pro: {
+    difficulty: 'pro', windows: { perfect: 0.03, great: 0.06, good: 0.09, poor: 0.13 }, laneTime: 0.9, tempo: 0.85,
+    phases: ['takeaway', 'set', 'top', 'transition', 'release', 'strike'], doubles: ['transition', 'strike'],
+    puttPhases: ['takeaway', 'top', 'strike'],
+  },
 };
 
-export const ADVANCED: TimingSettings = {
-  mode: 'advanced',
-  windows: { perfect: 0.035, great: 0.07, good: 0.11, poor: 0.16 },
-  laneTime: 1.1,
-  tempo: 1,
-};
+/** Kept for older saved settings and tests. */
+export const SIMPLE = TIMING_PRESETS.easy;
+export const ADVANCED = TIMING_PRESETS.hard;
 
 export interface Prompt {
   readonly phase: Phase;
-  readonly arrow: Arrow;
-  /** When the arrow reaches the line, s after the swing starts. */
+  /** One arrow, or two to press together. */
+  readonly arrows: readonly Arrow[];
+  /** When the arrows reach the line, s after the swing starts. */
   readonly time: number;
 }
 
@@ -68,26 +91,27 @@ export function seeded(seed: number): () => number {
   };
 }
 
-// Beat times in s. A full swing keeps the classic 3:1 backswing-to-downswing tempo.
-const FULL: readonly (readonly [Phase, number])[] = [['takeaway', 0], ['top', 0.9], ['transition', 1.25], ['release', 1.6], ['strike', 1.9]];
-const FULL_SIMPLE: readonly (readonly [Phase, number])[] = [['top', 0], ['release', 0.6], ['strike', 1.1]];
-const PUTT: readonly (readonly [Phase, number])[] = [['takeaway', 0], ['top', 0.7], ['strike', 1.3]];
-const PUTT_SIMPLE: readonly (readonly [Phase, number])[] = [['top', 0], ['strike', 0.7]];
-
-/** A fresh random arrow for each swing moment, arriving at the line in tempo. */
+/** Fresh random arrows for each swing moment, arriving at the line in tempo. */
 export function makePrompts(settings: TimingSettings, putting: boolean, random: () => number): Prompt[] {
-  const beats = putting ? (settings.mode === 'simple' ? PUTT_SIMPLE : PUTT) : settings.mode === 'simple' ? FULL_SIMPLE : FULL;
-  return beats.map(([phase, beat]) => ({
-    phase,
-    arrow: ARROWS[Math.floor(random() * ARROWS.length)],
-    time: settings.laneTime + beat * settings.tempo,
-  }));
+  const phases = putting ? settings.puttPhases : settings.phases;
+  const first = putting ? PUTT_BEAT[phases[0]] ?? 0 : BEAT[phases[0]];
+  return phases.map((phase) => {
+    const a = ARROWS[Math.floor(random() * ARROWS.length)];
+    let arrows: Arrow[] = [a];
+    if (!putting && settings.doubles.includes(phase)) {
+      const others = ARROWS.filter((x) => x !== a);
+      arrows = [a, others[Math.floor(random() * others.length)]];
+    }
+    const beat = (putting ? PUTT_BEAT[phase] ?? 0 : BEAT[phase]) - first;
+    return { phase, arrows, time: settings.laneTime + beat * settings.tempo };
+  });
 }
 
 export interface Judgement {
   readonly prompt: Prompt;
-  readonly pressed: Arrow | null;
-  /** Press time minus target time, s; negative is early. Null when nothing was pressed. */
+  /** Arrows pressed for this prompt, in order. */
+  readonly pressed: readonly Arrow[];
+  /** Press time minus target time, s, for the press furthest off; negative is early. Null when nothing was pressed. */
   readonly offset: number | null;
   readonly grade: Grade;
   /** Signed size of the fault: 0 is perfect, negative early, positive late. Up to 3 for a wrong key. */
@@ -102,19 +126,32 @@ export function gradeOf(offset: number, windows: Windows): Grade {
   return late <= windows.perfect ? 'perfect' : late <= windows.great ? 'great' : late <= windows.good ? 'good' : 'poor';
 }
 
+export interface Press {
+  readonly arrow: Arrow;
+  readonly time: number;
+}
+
 /**
- * Scores one prompt. Inside the perfect band there is no fault; beyond it the fault grows with how far off the
- * press was. A wrong arrow is a strong penalty, and a missed prompt nearly as bad, each in a random direction.
+ * Scores one prompt from its presses. Inside the perfect band there is no fault; beyond it the fault grows with
+ * how far off the worst press was. A wrong arrow is a strong penalty, and a missed or half-pressed prompt nearly as
+ * bad, each in a random direction.
  */
-export function judge(prompt: Prompt, press: { arrow: Arrow; time: number } | null, windows: Windows, random: () => number): Judgement {
+export function judge(prompt: Prompt, presses: readonly Press[] | Press | null, windows: Windows, random: () => number): Judgement {
+  const list = presses === null ? [] : Array.isArray(presses) ? presses : [presses as Press];
   const randomSign = () => (random() < 0.5 ? -1 : 1);
-  if (!press) return { prompt, pressed: null, offset: null, grade: 'miss', severity: randomSign() * MISS_SEVERITY };
-  const offset = press.time - prompt.time;
-  if (press.arrow !== prompt.arrow) return { prompt, pressed: press.arrow, offset, grade: 'wrong', severity: randomSign() * WRONG_SEVERITY };
-  const grade = gradeOf(offset, windows);
-  const late = Math.abs(offset);
-  const severity = grade === 'perfect' ? 0 : Math.sign(offset) * (0.3 + (1.2 * (late - windows.perfect)) / (windows.poor - windows.perfect));
-  return { prompt, pressed: press.arrow, offset, grade, severity };
+  const pressed = list.map((p) => p.arrow);
+  const offsets = list.map((p) => p.time - prompt.time);
+  const worst = offsets.reduce<number | null>((w, o) => (w === null || Math.abs(o) > Math.abs(w) ? o : w), null);
+  if (list.some((p) => !prompt.arrows.includes(p.arrow)) || new Set(pressed).size < pressed.length) {
+    return { prompt, pressed, offset: worst, grade: 'wrong', severity: randomSign() * WRONG_SEVERITY };
+  }
+  if (list.length < prompt.arrows.length || worst === null) {
+    return { prompt, pressed, offset: worst, grade: 'miss', severity: randomSign() * MISS_SEVERITY };
+  }
+  const grade = gradeOf(worst, windows);
+  const late = Math.abs(worst);
+  const severity = grade === 'perfect' ? 0 : Math.sign(worst) * (0.3 + (1.2 * (late - windows.perfect)) / (windows.poor - windows.perfect));
+  return { prompt, pressed, offset: worst, grade, severity };
 }
 
 /** A swing in progress: feed it key presses and the clock; it judges each prompt once. */
@@ -123,6 +160,7 @@ export class TimingRun {
   readonly judgements: (Judgement | null)[];
   private readonly settings: TimingSettings;
   private readonly random: () => number;
+  private pending: Press[] = [];
 
   constructor(prompts: readonly Prompt[], settings: TimingSettings, random: () => number) {
     this.prompts = prompts;
@@ -147,16 +185,24 @@ export class TimingRun {
     if (i === -1) return null;
     const prompt = this.prompts[i];
     if (time < prompt.time - this.settings.windows.poor) return null;
-    const judgement = judge(prompt, { arrow, time }, this.settings.windows, this.random);
+    const presses = [...this.pending, { arrow, time }];
+    const wrong = !prompt.arrows.includes(arrow) || this.pending.some((p) => p.arrow === arrow);
+    if (!wrong && presses.length < prompt.arrows.length) {
+      this.pending = presses;
+      return null;
+    }
+    this.pending = [];
+    const judgement = judge(prompt, presses, this.settings.windows, this.random);
     this.judgements[i] = judgement;
     return judgement;
   }
 
-  /** Marks prompts whose window has passed as missed. Returns the new judgements. */
+  /** Marks prompts whose window has passed as missed (or half pressed). Returns the new judgements. */
   advance(time: number): Judgement[] {
     const missed: Judgement[] = [];
     for (let i = this.current; i !== -1 && time > this.prompts[i].time + this.settings.windows.poor; i = this.current) {
-      const judgement = judge(this.prompts[i], null, this.settings.windows, this.random);
+      const judgement = judge(this.prompts[i], this.pending, this.settings.windows, this.random);
+      this.pending = [];
       this.judgements[i] = judgement;
       missed.push(judgement);
     }
@@ -171,10 +217,11 @@ export interface Faults {
   readonly path: number;
   readonly face: number;
   readonly loft: number;
-  readonly contact: Contact;
+  /** Where the bottom of the swing and the strike point moved. */
+  readonly strike: Strike;
 }
 
-export const NO_FAULTS: Faults = { speedFactor: 1, attack: 0, path: 0, face: 0, loft: 0, contact: CLEAN_CONTACT };
+export const NO_FAULTS: Faults = { speedFactor: 1, attack: 0, path: 0, face: 0, loft: 0, strike: CENTRED_STRIKE };
 
 /**
  * Turns judgements into club delivery faults. Swinging harder than full amplifies every fault; easing off
@@ -187,8 +234,8 @@ export function faultsFrom(judgements: readonly Judgement[], effort: number, put
   let path = 0;
   let face = 0;
   let loft = 0;
-  let turf = 0;
-  let height = 0;
+  let lowPointShift = 0;
+  let depth = 0;
   let toe = 0;
   for (const j of judgements) {
     const s = j.severity * amplify;
@@ -206,6 +253,10 @@ export function faultsFrom(judgements: readonly Judgement[], effort: number, put
         attack += degrees(1.2) * s;
         path += degrees(1.0) * s;
         break;
+      case 'set':
+        speedFactor *= Math.max(0.6, 1 - 0.03 * Math.max(0, s));
+        loft += degrees(1.0) * s;
+        break;
       case 'top':
         speedFactor *= Math.max(0.5, 1 - 0.05 * Math.abs(s));
         face += degrees(0.8) * Math.max(0, s);
@@ -219,13 +270,14 @@ export function faultsFrom(judgements: readonly Judgement[], effort: number, put
         loft -= degrees(1.5) * s;
         break;
       case 'strike':
-        turf += 0.012 * Math.max(0, -s);
-        height -= 0.006 * Math.max(0, s);
+        // Early: the arc bottoms out behind the ball (fat). Late: it is still rising past the ball (thin).
+        lowPointShift += 0.04 * s;
+        depth += 0.002 * Math.max(0, -s);
         toe += 0.004 * Math.abs(s) * (random() < 0.5 ? -1 : 1);
         break;
     }
   }
-  return { speedFactor, attack, path, face, loft, contact: { toe, height, turf } };
+  return { speedFactor, attack, path, face, loft, strike: { lowPointShift, depth, toe } };
 }
 
 export function applyFaults(d: Delivery, f: Faults): Delivery {

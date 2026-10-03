@@ -20,6 +20,8 @@ export interface Setup {
   readonly path: number;
   /** Change to the club's swing plane, rad. + more upright. */
   readonly plane: number;
+  /** Swing the bottom of the arc lower (+, dig) or higher (-, pick it clean) than a centred strike, m. */
+  readonly depth?: number;
 }
 
 export interface Player {
@@ -30,7 +32,7 @@ export interface Player {
 }
 
 export function stockSetup(club: ClubSpec, effort = 1): Setup {
-  return { club, effort, ballPosition: 0, shaftLean: 0, aim: 0, face: 0, path: 0, plane: 0 };
+  return { club, effort, ballPosition: 0, shaftLean: 0, aim: 0, face: 0, path: 0, plane: 0, depth: 0 };
 }
 
 /** The swing plane this setup actually uses, rad from the ground. */

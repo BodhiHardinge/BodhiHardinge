@@ -2,30 +2,27 @@ import type { ClubSpec, Delivery } from './club.ts';
 import type { LaunchConditions } from './launch.ts';
 import { degrees } from './units.ts';
 
-/** Where and how the face met the ball. All zero for a centred, clean strike. */
+/**
+ * Where and how the face met the ball, from the club-ground contact model (see contact.ts). All neutral for a
+ * centred, clean strike.
+ */
 export interface Contact {
   /** Strike point toward the toe (+) or heel (-) from the sweet spot, m. */
   readonly toe: number;
   /** Strike point above (+) or below (-) the sweet spot, m. Thin shots are struck low. */
   readonly height: number;
-  /** How far behind the ball the club first meets the ground, m. Fat shots lose speed and spin. */
-  readonly turf: number;
+  /** Club speed kept after cutting through turf, sand or grass before the ball, 0 to 1. */
+  readonly speedFactor: number;
+  /** Spin kept when grass, soil or sand is trapped between face and ball, 0 to 1. */
+  readonly spinFactor: number;
+  /**
+   * Share of the strike carried by a cushion of sand rather than the face, 0 to 1. A bunker splash: the ball
+   * leaves slower, softer and along the face.
+   */
+  readonly cushion: number;
 }
 
-export const CLEAN_CONTACT: Contact = { toe: 0, height: 0, turf: 0 };
-
-/** How the lie changes the strike: grass trapped between face and ball cuts spin and some speed. */
-export interface Lie {
-  readonly speed: number;
-  readonly spin: number;
-}
-
-export const LIES = {
-  tee: { speed: 1, spin: 1 },
-  fairway: { speed: 1, spin: 1 },
-  rough: { speed: 0.93, spin: 0.55 },
-  green: { speed: 1, spin: 1 },
-} as const satisfies Record<string, Lie>;
+export const CLEAN_CONTACT: Contact = { toe: 0, height: 0, speedFactor: 1, spinFactor: 1, cushion: 0 };
 
 // Piecewise-linear lookup on static loft in degrees.
 function byLoft(table: readonly (readonly [number, number])[], loftDeg: number): number {
@@ -109,11 +106,12 @@ export function spinLoft(d: Delivery): number {
  * (closer to the normal), spinning about the axis perpendicular to both; spin grows with club speed times the
  * sine of the spin loft. This is the D-plane model, calibrated to the Tour averages.
  */
-export function strike(delivery: Delivery, spec: ClubSpec, contact: Contact = CLEAN_CONTACT, lie: Lie = LIES.fairway): LaunchConditions {
+export function strike(delivery: Delivery, spec: ClubSpec, contact: Contact = CLEAN_CONTACT): LaunchConditions {
   const path = direction(delivery.attackAngle, delivery.clubPath);
   const normal = direction(delivery.dynamicLoft, delivery.faceAngle);
   const theta = Math.acos(Math.min(1, Math.max(-1, dot(path, normal))));
-  const g = gearFraction(spec);
+  // A sand cushion lets the ball slide off along the face rather than be gripped toward the path.
+  const g = gearFraction(spec) * (1 - contact.cushion);
 
   // Ball direction: slerp from the face normal toward the path by the gear fraction.
   let ball: V = normal;
@@ -123,16 +121,15 @@ export function strike(delivery: Delivery, spec: ClubSpec, contact: Contact = CL
     ball = unit([a * path[0] + b * normal[0], a * path[1] + b * normal[1], a * path[2] + b * normal[2]]);
   }
 
-  // Fat: the club digs in first and loses speed, and turf between face and ball cuts spin.
-  const dig = Math.max(0, contact.turf);
-  const turfLoss = Math.exp(-dig / 0.05);
-  const clubSpeed = delivery.clubSpeed * turfLoss;
+  const clubSpeed = delivery.clubSpeed * contact.speedFactor;
 
   // Off-centre strikes lose ball speed; vertical and horizontal gear effect change launch, spin and curve.
   const miss = Math.hypot(contact.toe, contact.height);
-  const centred = Math.max(0.4, 1 - 400 * miss * miss);
+  const centred = Math.max(0.35, 1 - 400 * (spec.forgiveness ?? 1) * miss * miss);
   const wood = spec.head === 'driver' || spec.head === 'wood';
-  const ballSpeed = clubSpeed * headEfficiency(spec) * Math.max(0, Math.cos(theta)) * centred * lie.speed;
+  // A sand splash: the face pushes sand, the sand pushes the ball, at about half the club's speed or less.
+  const splash = 1 - contact.cushion * 0.62;
+  const ballSpeed = clubSpeed * headEfficiency(spec) * Math.max(0, Math.cos(theta)) * centred * splash;
 
   let launchAngle = Math.asin(ball[1]) + degrees(150) * contact.height;
   const launchDirection = Math.atan2(ball[2], ball[0]);
@@ -150,9 +147,8 @@ export function strike(delivery: Delivery, spec: ClubSpec, contact: Contact = CL
   axisTilt -= contact.toe * degrees(wood ? 400 : 150);
 
   const spinGear = wood ? 1 - 12 * contact.height : 1 + 10 * contact.height;
-  const turfSpin = 1 / (1 + 40 * dig);
   const spinRate =
-    byLoft(SPIN_EFFICIENCY, loftDeg(spec)) * clubSpeed * Math.sin(theta) * Math.max(0.2, spinGear) * turfSpin * lie.spin;
+    byLoft(SPIN_EFFICIENCY, loftDeg(spec)) * clubSpeed * Math.sin(theta) * Math.max(0.2, spinGear) * contact.spinFactor * (1 - 0.7 * contact.cushion);
 
   launchAngle = Math.max(degrees(-10), launchAngle);
   return { ballSpeed, launchAngle, launchDirection, spinRate, spinAxis: axisTilt };

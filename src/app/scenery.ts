@@ -278,3 +278,141 @@ export function buildHole(hole: HoleLayout, options: { fairway?: boolean } = {})
   group.add(stick);
   return group;
 }
+
+/** What the course renderer needs: the rasters and terrain from course-loader.ts. */
+export interface CourseRasters {
+  readonly width: number;
+  readonly depth: number;
+  readonly heights: Float32Array;
+  readonly codes: Uint8Array;
+  height(x: number, z: number): number;
+}
+
+// Surface codes from tools/build_course.py: out, thick, rough, fairway, fringe, green, tee, sand, water.
+const SURFACE_RGB: readonly (readonly [number, number, number])[] = [
+  [150, 141, 104], [72, 112, 52], [61, 115, 52], [95, 174, 79], [78, 154, 63], [151, 222, 122], [108, 189, 92], [226, 211, 160], [64, 122, 176],
+];
+
+/**
+ * The whole course as one lit mesh (a vertex every 2 m) painted from the surface raster at 2 px per metre, with
+ * mowing stripes on fairways and greens, and scrub dotted through the native areas.
+ */
+export function buildCourseTerrain(c: CourseRasters): THREE.Group {
+  const group = new THREE.Group();
+  const step = 2;
+  const nx = Math.floor(c.width / step) + 1;
+  const nz = Math.floor(c.depth / step) + 1;
+  const positions = new Float32Array(nx * nz * 3);
+  const uvs = new Float32Array(nx * nz * 2);
+  for (let j = 0; j < nz; j++) {
+    for (let i = 0; i < nx; i++) {
+      const x = Math.min(c.width, i * step);
+      const z = Math.min(c.depth, j * step);
+      const k = j * nx + i;
+      positions.set([x, c.height(x, z), z], 3 * k);
+      uvs.set([x / c.width, 1 - z / c.depth], 2 * k);
+    }
+  }
+  const index = new Uint32Array((nx - 1) * (nz - 1) * 6);
+  let n = 0;
+  for (let j = 0; j < nz - 1; j++) {
+    for (let i = 0; i < nx - 1; i++) {
+      const a = j * nx + i;
+      const b = a + 1;
+      const d = a + nx;
+      const e = d + 1;
+      index.set([a, d, b, b, d, e], n);
+      n += 6;
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  geometry.setIndex(new THREE.BufferAttribute(index, 1));
+  geometry.computeVertexNormals();
+
+  const scale = 2;
+  const canvas = document.createElement('canvas');
+  canvas.width = c.width * scale;
+  canvas.height = c.depth * scale;
+  const ctx = canvas.getContext('2d')!;
+  const image = ctx.createImageData(canvas.width, canvas.height);
+  const rnd = random(11);
+  for (let y = 0; y < canvas.height; y++) {
+    for (let x = 0; x < canvas.width; x++) {
+      const mx = x / scale;
+      const mz = y / scale;
+      const code = c.codes[Math.floor(mz) * c.width + Math.floor(mx)];
+      const [r, g, b] = SURFACE_RGB[code] ?? SURFACE_RGB[0];
+      let k = 1 + (rnd() - 0.5) * 0.08;
+      // Mowing stripes, 8 m wide on fairways and 3 m on greens and tees, running diagonally.
+      if (code === 3) k *= Math.floor((mx + mz) / 8) % 2 ? 1.05 : 0.95;
+      if (code === 5 || code === 6) k *= Math.floor((mx - mz) / 3) % 2 ? 1.04 : 0.96;
+      if (code === 7) k *= 1 + (rnd() - 0.5) * 0.1;
+      const o = 4 * (y * canvas.width + x);
+      image.data[o] = Math.min(255, r * k);
+      image.data[o + 1] = Math.min(255, g * k);
+      image.data[o + 2] = Math.min(255, b * k);
+      image.data[o + 3] = 255;
+    }
+  }
+  ctx.putImageData(image, 0, 0);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 8;
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({ map: texture }));
+  group.add(mesh);
+
+  // Scrub and a few pines in native ground, kept clear of the playing areas.
+  const spots: THREE.Matrix4[] = [];
+  const pines: THREE.Matrix4[] = [];
+  const plant = random(77);
+  for (let i = 0; i < 9000 && spots.length < 5000; i++) {
+    const x = plant() * c.width;
+    const z = plant() * c.depth;
+    const code = c.codes[Math.floor(z) * c.width + Math.floor(x)];
+    if (code !== 0 && code !== 1) continue;
+    const s = 0.6 + plant() * 1.2;
+    const m = new THREE.Matrix4().compose(new THREE.Vector3(x, c.height(x, z), z), new THREE.Quaternion(), new THREE.Vector3(s * 1.4, s, s * 1.2));
+    if (code === 0 && plant() < 0.12) pines.push(m);
+    else spots.push(m);
+  }
+  const bush = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(0.9, 0).translate(0, 0.5, 0), new THREE.MeshLambertMaterial({ color: '#5d6b3a' }), spots.length);
+  spots.forEach((m, i) => bush.setMatrixAt(i, m));
+  group.add(bush);
+  const crown = new THREE.ConeGeometry(2.6, 9, 7).translate(0, 7, 0);
+  const trunk = new THREE.CylinderGeometry(0.3, 0.4, 2.6, 6).translate(0, 1.3, 0);
+  for (const [geo, colour] of [[crown, COLOURS.pine], [trunk, COLOURS.trunk]] as const) {
+    const trees = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ color: colour }), pines.length);
+    pines.forEach((m, i) => trees.setMatrixAt(i, m));
+    group.add(trees);
+  }
+  return group;
+}
+
+/** A cup and flagstick sitting on the terrain. */
+export function buildCup(pin: { x: number; z: number }, y: number): THREE.Group {
+  const group = new THREE.Group();
+  const hole = new THREE.Mesh(
+    new THREE.CircleGeometry(CUP_RADIUS, 32).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: '#1e1a14', polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }),
+  );
+  hole.position.y = 0.004;
+  const rim = new THREE.Mesh(
+    new THREE.RingGeometry(CUP_RADIUS, CUP_RADIUS + 0.012, 32).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: '#f2f2f2', polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }),
+  );
+  rim.position.y = 0.004;
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.0125, 0.0125, 2.13, 8).translate(0, 1.065, 0), new THREE.MeshLambertMaterial({ color: '#f3f1ea' }));
+  const shape = new THREE.Shape();
+  shape.moveTo(0, 0);
+  shape.lineTo(0.5, 0);
+  shape.lineTo(0.5, -0.35);
+  shape.lineTo(0, -0.35);
+  shape.closePath();
+  const flag = new THREE.Mesh(new THREE.ShapeGeometry(shape), new THREE.MeshBasicMaterial({ color: COLOURS.flag, side: THREE.DoubleSide, toneMapped: false }));
+  flag.position.set(0, 2.13, 0);
+  group.add(hole, rim, pole, flag);
+  group.position.set(pin.x, y, pin.z);
+  return group;
+}

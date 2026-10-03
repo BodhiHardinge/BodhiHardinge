@@ -14,6 +14,10 @@ export interface ClubSpec {
   /** How steep the swing plane is from the ground, rad. */
   readonly plane: number;
   readonly head: 'driver' | 'wood' | 'iron' | 'putter';
+  /** How much off-centre strikes cost, relative to a typical club of its kind: below 1 is more forgiving. */
+  readonly forgiveness?: number;
+  /** Sole bounce angle, rad: how much the sole resists digging. */
+  readonly bounce?: number;
 }
 
 const club = (

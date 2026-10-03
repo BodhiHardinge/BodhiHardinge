@@ -1,0 +1,32 @@
+{
+ "features": "data/course-build/suncity_landuse.json",
+ "dem": "data/course-build/suncity_dem.npz",
+ "course_name": "Sun City Country Club",
+ "display_name": "Sun City",
+ "location": "Yanchep, Western Australia",
+ "note": "Hole shapes from OpenStreetMap. Heights are 30 m satellite terrain, so slopes are broad and greens are smoothed; Landgate lidar would fix that.",
+ "height_source": "SRTM-class 30 m terrain via AWS Terrain Tiles, smoothed",
+ "pars": [
+  4,
+  4,
+  3,
+  5,
+  4,
+  4,
+  4,
+  3,
+  5,
+  4,
+  4,
+  4,
+  4,
+  3,
+  5,
+  4,
+  3,
+  5
+ ],
+ "out": "data/course-build/course-suncity",
+ "smooth": 6,
+ "synthesize_tees": true
+}

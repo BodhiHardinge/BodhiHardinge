@@ -1,0 +1,31 @@
+{
+ "features": "data/course-build/torrey_landuse.json",
+ "dem": "data/course-build/torrey_dem.npz",
+ "course_name": "Torrey Pines South Course",
+ "display_name": "Torrey Pines South",
+ "location": "La Jolla, California",
+ "note": "Hole shapes from OpenStreetMap; heights from USGS 2014 lidar at 1 m, so green contours are real.",
+ "height_source": "USGS 3DEP lidar, CA San Diego QL2 2014, ground returns at 1 m",
+ "pars": [
+  4,
+  4,
+  3,
+  4,
+  4,
+  5,
+  4,
+  3,
+  5,
+  4,
+  3,
+  4,
+  5,
+  4,
+  4,
+  3,
+  4,
+  5
+ ],
+ "out": "data/course-build/course-torrey",
+ "smooth": 1.0
+}

@@ -14,3 +14,5 @@ export * from './club.ts';
 export * from './swing.ts';
 export * from './impact.ts';
 export * from './setup.ts';
+export * from './terrain.ts';
+export * from './contact.ts';

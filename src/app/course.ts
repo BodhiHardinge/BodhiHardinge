@@ -10,7 +10,8 @@ import { toRpm } from '../physics/units.ts';
 import { vec3, type Vec3 } from '../physics/vec3.ts';
 import { Golfer } from './golfer.ts';
 import { ARROWS, ForcesInset, SPIN_DISPLAY_SLOWDOWN, type ForceSnapshot } from './pip.ts';
-import { buildHole, buildMarkers, buildRange, canvasTexture } from './scenery.ts';
+import { buildCourseTerrain, buildCup, buildHole, buildMarkers, buildRange, canvasTexture, type CourseRasters } from './scenery.ts';
+import type { Terrain } from '../physics/terrain.ts';
 import { unitFor, type UnitSystem } from './units.ts';
 
 export type CameraMode = 'tee' | 'swing' | 'follow' | 'side' | 'above' | 'free';
@@ -36,6 +37,10 @@ export interface SceneInput {
   readonly preview?: Shot | null;
   /** Show the golfer at address, ready to swing, instead of the shot at rest. */
   readonly atAddress?: boolean;
+  /** Height of the ground under the ball in world coordinates, m, when playing on a course. */
+  readonly frameHeight?: number;
+  /** The ground in the shot frame, for keeping cameras above it. */
+  readonly terrain?: Terrain;
 }
 
 export interface CourseViewOptions {
@@ -107,6 +112,9 @@ export class CourseView {
   private readonly trailGroup = new THREE.Group();
   /** Ground, planting and the hole, moved so the current shot frame sits at the origin. */
   private readonly world = new THREE.Group();
+  private readonly rangeGroup = new THREE.Group();
+  private courseGroup: THREE.Group | null = null;
+  private course: CourseRasters | null = null;
   private readonly options: CourseViewOptions;
   private preview: THREE.Line | null = null;
   private readonly keys = new Set<string>();
@@ -138,7 +146,8 @@ export class CourseView {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
 
-    buildRange(this.scene, this.world, { fairway: !options.holeFairway });
+    buildRange(this.scene, this.rangeGroup, { fairway: !options.holeFairway });
+    this.world.add(this.rangeGroup);
     this.scene.add(this.world, this.markers, this.golfer.group, this.trailGroup);
     this.markers.visible = options.markers !== false;
 
@@ -219,10 +228,35 @@ export class CourseView {
     if (move.lengthSq() === 0) return;
     const fast = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
     move.normalize().multiplyScalar((fast ? 60 : 15) * dt);
-    if (this.camera.position.y + move.y < 0.3) move.y = 0.3 - this.camera.position.y;
+    const floor = this.groundAt(this.camera.position.x + move.x, this.camera.position.z + move.z) + 0.3;
+    if (this.camera.position.y + move.y < floor) move.y = floor - this.camera.position.y;
     this.camera.position.add(move);
     this.controls.target.add(move);
     this.controls.update();
+  }
+
+  /** Replaces the driving range with a real course's terrain. */
+  setCourse(course: CourseRasters): void {
+    if (this.courseGroup) {
+      this.world.remove(this.courseGroup);
+      this.courseGroup.traverse((o) => {
+        if (o instanceof THREE.Mesh) o.geometry.dispose();
+      });
+    }
+    this.course = course;
+    this.holeKey = '';
+    this.courseGroup = buildCourseTerrain(course);
+    this.world.add(this.courseGroup);
+    this.rangeGroup.visible = false;
+    this.scene.fog = new THREE.Fog('#dbe7ea', 400, 2600);
+    this.camera.far = 6000;
+    this.camera.updateProjectionMatrix();
+    this.controls.maxDistance = 2500;
+  }
+
+  /** Ground height in the current shot frame, or 0 on the range. */
+  private groundAt(x: number, z: number): number {
+    return this.input?.terrain ? this.input.terrain.height(x, z) : 0;
   }
 
   /** Shows a new shot at rest. Call hit() to play the swing and flight. */
@@ -242,7 +276,9 @@ export class CourseView {
     if (key !== this.holeKey) {
       this.holeKey = key;
       if (this.holeGroup) this.world.remove(this.holeGroup);
-      this.holeGroup = buildHole(input.hole, { fairway: this.options.holeFairway });
+      this.holeGroup = this.course
+        ? buildCup(input.hole.pin, this.course.height(input.hole.pin.x, input.hole.pin.z))
+        : buildHole(input.hole, { fairway: this.options.holeFairway });
       this.world.add(this.holeGroup);
     }
     // Place the world so the shot frame's origin is at the scene origin, facing +x.
@@ -250,7 +286,7 @@ export class CourseView {
     const c = Math.cos(frame.heading);
     const sn = Math.sin(frame.heading);
     this.world.rotation.y = frame.heading;
-    this.world.position.set(-(frame.x * c + frame.z * sn), 0, -(-frame.x * sn + frame.z * c));
+    this.world.position.set(-(frame.x * c + frame.z * sn), -(input.frameHeight ?? 0), -(-frame.x * sn + frame.z * c));
     this.buildPreview(input.preview ?? null);
     this.golfer.setClub(input.club);
     this.tracer = this.replaceTracer(this.tracer, input.shot, '#f4d35e', 1);
@@ -283,6 +319,16 @@ export class CourseView {
     this.lastFrame = performance.now();
     this.frameCamera(true);
     this.requestRender();
+  }
+
+  /** Jumps to the end of the shot being played. */
+  skip(): void {
+    if (!this.playing || !this.input) return;
+    this.playing = false;
+    this.clock = this.endTime();
+    this.showAt(this.clock, 0);
+    this.frameCamera(true);
+    this.onFinish();
   }
 
   setSpeed(speed: number): void {
@@ -633,6 +679,8 @@ export class CourseView {
       case 'free':
         return;
     }
+    // Never put the camera inside a hill.
+    position.y = Math.max(position.y, this.groundAt(position.x, position.z) + 1.2);
     this.camera.position.copy(position);
     this.controls.target.copy(target);
     this.camera.lookAt(target);

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PGA_TOUR_AVERAGES } from '../analysis/reference-data.ts';
 import { clubFor, PUTTER, type Delivery } from './club.ts';
-import { LIES, strike, tourDynamicLoft } from './impact.ts';
+import { CLEAN_CONTACT, strike, tourDynamicLoft } from './impact.ts';
 import { deliveryFor, stockSetup } from './setup.ts';
 import { degrees, mph, toDegrees, toMph, toRpm } from './units.ts';
 
@@ -50,15 +50,16 @@ describe('strike model', () => {
     expect(lofted.ballSpeed).toBeLessThan(stock.ballSpeed);
   });
 
-  it('punishes poor contact and heavy lies', () => {
+  it('punishes poor contact', () => {
     const stock = strike(base, seven);
-    const fat = strike(base, seven, { toe: 0, height: 0, turf: 0.03 });
+    const fat = strike(base, seven, { ...CLEAN_CONTACT, speedFactor: 0.6 });
     expect(fat.ballSpeed).toBeLessThan(stock.ballSpeed * 0.7);
-    const toe = strike(base, seven, { toe: 0.015, height: 0, turf: 0 });
+    const toe = strike(base, seven, { ...CLEAN_CONTACT, toe: 0.015 });
     expect(toe.ballSpeed).toBeLessThan(stock.ballSpeed);
     expect(toe.spinAxis).toBeLessThan(0);
-    const rough = strike(base, seven, undefined, LIES.rough);
-    expect(rough.spinRate).toBeLessThan(stock.spinRate * 0.6);
+    const splash = strike(base, seven, { ...CLEAN_CONTACT, cushion: 0.7 });
+    expect(splash.spinRate).toBeLessThan(stock.spinRate * 0.6);
+    expect(splash.ballSpeed).toBeLessThan(stock.ballSpeed * 0.65);
   });
 
   it('gives a putt almost no spin and a low launch', () => {

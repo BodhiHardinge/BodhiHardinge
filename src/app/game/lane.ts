@@ -20,7 +20,8 @@ export class Lane {
   private readonly call: HTMLElement;
   private run: TimingRun | null = null;
   private settings: TimingSettings | null = null;
-  private notes: HTMLElement[] = [];
+  /** Note elements for each prompt: one, or two for a double. */
+  private notes: HTMLElement[][] = [];
   private receptors = new Map<Arrow, HTMLElement>();
   private startedAt = 0;
   private frame = 0;
@@ -74,14 +75,16 @@ export class Lane {
       this.receptors.set(arrow, receptor);
       this.track.append(column);
     }
-    this.notes = prompts.map((p) => {
-      const note = document.createElement('div');
-      note.className = `lane-note phase-${p.phase}`;
-      note.textContent = GLYPH[p.arrow];
-      note.style.left = `${(ARROWS.indexOf(p.arrow) + 0.5) * 25}%`;
-      this.track.append(note);
-      return note;
-    });
+    this.notes = prompts.map((p) =>
+      p.arrows.map((arrow) => {
+        const note = document.createElement('div');
+        note.className = `lane-note phase-${p.phase}${p.arrows.length > 1 ? ' double' : ''}`;
+        note.textContent = GLYPH[arrow];
+        note.style.left = `${(ARROWS.indexOf(arrow) + 0.5) * 25}%`;
+        this.track.append(note);
+        return note;
+      }),
+    );
   }
 
   private key(event: KeyboardEvent): void {
@@ -107,7 +110,7 @@ export class Lane {
 
   private mark(i: number): void {
     const j = this.run?.judgements[i];
-    if (j) this.notes[i].dataset.grade = j.grade;
+    if (j) for (const note of this.notes[i]) note.dataset.grade = j.grade;
   }
 
   private announce(j: Judgement): void {
@@ -131,14 +134,15 @@ export class Lane {
     run.prompts.forEach((p, i) => {
       // Arrows fall at constant speed and reach the line exactly on their beat.
       const y = (LINE + ((t - p.time) / settings.laneTime) * LINE) * height;
-      const note = this.notes[i];
-      note.style.transform = `translate(-50%, ${y}px) translate(0, -50%)`;
-      note.style.opacity = y < -40 || y > height + 40 ? '0' : '1';
+      for (const note of this.notes[i]) {
+        note.style.transform = `translate(-50%, ${y}px) translate(0, -50%)`;
+        note.style.opacity = y < -40 || y > height + 40 ? '0' : '1';
+      }
     });
 
     const next = run.current === -1 ? null : run.prompts[run.current];
     this.phaseLabel.innerHTML = next
-      ? `<b>${PHASE_INFO[next.phase].label}</b><span>${PHASE_INFO[next.phase].controls}</span>`
+      ? `<b>${PHASE_INFO[next.phase].label}${next.arrows.length > 1 ? ' · press both' : ''}</b><span>${PHASE_INFO[next.phase].controls}</span>`
       : '<b>Through the ball</b>';
 
     const last = run.prompts[run.prompts.length - 1];

@@ -10,6 +10,8 @@ export interface FlightOptions {
   readonly tolerance?: Tolerance;
   /** Give up if the ball is still in the air after this long, s. */
   readonly maxTime?: number;
+  /** Ground height under a point, m. Without it the ground is level at the environment's landing height. */
+  readonly ground?: (x: number, z: number) => number;
 }
 
 export interface FlightResult {
@@ -53,7 +55,9 @@ export function flyFrom(initial: Float64Array, env: Environment, options: Flight
   const f: Rhs = (y, dydt) => derivative(ctx, y, dydt);
   const stepper = new AdaptiveStepper(f, initial, options.tolerance ?? DEFAULT_TOLERANCE, INITIAL_STEP, MAX_STEP);
   const ws = stepper.workspace;
-  const height = env.landingHeight;
+  const ground = options.ground ?? (() => env.landingHeight);
+  // Height above the ground; the landing is where this crosses zero.
+  const gap = (s: ArrayLike<number>) => s[1] - ground(s[0], s[2]);
 
   const times = [0];
   const states = Array.from(stepper.y);
@@ -80,8 +84,8 @@ export function flyFrom(initial: Float64Array, env: Environment, options: Flight
       apexFound = true;
     }
 
-    if (before[1] > height && y[1] <= height) {
-      const tau = findCrossing(f, before, beforeRate, h, (s) => s[1] - height, ws);
+    if (gap(before) > 0 && gap(y) <= 0) {
+      const tau = findCrossing(f, before, beforeRate, h, gap, ws);
       times.push(t0 + tau);
       states.push(...ws.next);
       rates.push(...ws.k7);
@@ -90,10 +94,10 @@ export function flyFrom(initial: Float64Array, env: Environment, options: Flight
     }
 
     // Heading down from on or below the landing surface: the ball can never come down onto it.
-    const startsDown = t0 === 0 && before[1] <= height && y[1] < before[1];
-    const sinksBelow = apexFound && y[4] < 0 && y[1] < height;
+    const startsDown = t0 === 0 && gap(before) <= 0 && gap(y) < gap(before);
+    const sinksBelow = apexFound && y[4] < 0 && gap(y) < -0.5;
     if (startsDown || sinksBelow) {
-      landed = startsDown && height === 0;
+      landed = startsDown && Math.abs(gap(before)) < 1e-9;
       break;
     }
 

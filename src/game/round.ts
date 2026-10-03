@@ -21,6 +21,12 @@ export class Round {
   constructor(course: Course) {
     this.course = course;
     this.scores = course.holes.map(() => null);
+    this.ball = course.holes[0].tee;
+  }
+
+  /** True before the first stroke on this hole: the ball is on the tee. */
+  get onTee(): boolean {
+    return this.strokes.length === 0 || this.strokes.every((s) => s.club === 'Penalty' || (s.to.x === this.current.tee.x && s.to.z === this.current.tee.z));
   }
 
   get current() {
@@ -49,7 +55,7 @@ export class Round {
   nextHole(): void {
     if (this.hole >= this.course.holes.length - 1) return;
     this.hole += 1;
-    this.ball = { x: 0, z: 0 };
+    this.ball = this.current.tee;
     this.strokes = [];
     this.holed = false;
   }

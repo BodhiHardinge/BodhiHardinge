@@ -1,4 +1,4 @@
-import { makeHole, type HoleLayout } from '../physics/hole.ts';
+import { makeHole, type HoleLayout, type Point } from '../physics/hole.ts';
 
 export interface CourseHole {
   readonly number: number;
@@ -6,6 +6,8 @@ export interface CourseHole {
   /** Tee to green centre, m. */
   readonly length: number;
   readonly layout: HoleLayout;
+  /** Where the hole is played from. */
+  readonly tee: Point;
 }
 
 export interface Course {
@@ -35,6 +37,6 @@ export const SUN_CITY: Course = {
     // Par 3s have no fairway to speak of: just a short apron in front of the green.
     const fairway =
       par === 3 ? { ...layout.fairway, from: { x: length - 50, z: 0 } } : { ...layout.fairway, from: { x: 30, z: 0 } };
-    return { number: i + 1, par, length, layout: { ...layout, fairway } };
+    return { number: i + 1, par, length, layout: { ...layout, fairway }, tee: { x: 0, z: 0 } };
   }),
 };
