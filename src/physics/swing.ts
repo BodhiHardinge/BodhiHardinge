@@ -33,6 +33,8 @@ const smooth = (x: number) => {
  */
 export class Swing {
   readonly start: number;
+  /** When the club starts back, after the golfer settles at address, s. */
+  readonly backswingStart: number;
   readonly end: number;
   readonly downswing: number;
   private readonly radius: number;
@@ -78,6 +80,7 @@ export class Swing {
     // A smooth acceleration averages two thirds of its peak speed.
     this.downswing = (1.5 * backswing) / this.angularSpeed;
     this.start = -(ADDRESS + BACKSWING + this.downswing);
+    this.backswingStart = this.start + ADDRESS;
     this.end = FOLLOW_THROUGH + 0.8;
   }
 

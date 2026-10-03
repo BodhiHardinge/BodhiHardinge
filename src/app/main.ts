@@ -218,7 +218,7 @@ presetSelect.addEventListener('change', () => {
   scheduleUpdate(true);
 });
 
-surfaceSelect.append(new Option('The hole (by position)', 'hole'), ...Object.entries(SURFACES).map(([key, s]) => new Option(`${s.name} everywhere`, key)));
+surfaceSelect.append(new Option('The hole (by position)', 'hole'), ...Object.entries(SURFACES).filter(([, s]) => !('hazard' in s)).map(([key, s]) => new Option(`${s.name} everywhere`, key)));
 surfaceSelect.value = surface;
 surfaceSelect.addEventListener('change', () => {
   surface = surfaceSelect.value as SurfaceKey | 'hole';

@@ -331,6 +331,12 @@ export class CourseView {
     this.onFinish();
   }
 
+  /** Chooses the captured golfer or the simple mannequin, and the putter head. */
+  setGolfer(captured: boolean): void {
+    this.golfer.useMotionCapture(captured);
+    this.showAt(this.clock, 0);
+  }
+
   setSpeed(speed: number): void {
     this.speed = speed;
   }
@@ -529,7 +535,8 @@ export class CourseView {
     const input = this.input;
     if (!input) return;
     const { shot, swing } = input;
-    this.golfer.update(swing.poseAt(Math.min(Math.max(t, swing.start), swing.end)));
+    const st = Math.min(Math.max(t, swing.start), swing.end);
+    this.golfer.update(swing.poseAt(st), st, swing);
 
     const p = t < 0 ? vec3(0, 0, 0) : shot.positionAt(Math.min(t, shot.duration));
     const drop = shot.holed ? Math.min(1, Math.max(0, (t - shot.duration) / DROP_TIME)) : 0;

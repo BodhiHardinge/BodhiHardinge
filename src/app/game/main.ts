@@ -595,6 +595,7 @@ const dialog = new SettingsDialog($<HTMLDialogElement>('settings'), settings, CO
   fillClubs();
   club = bag.find((c) => c.name === club.name) ?? bag[0];
   setup = { ...setup, club };
+  view.setGolfer(settings.golfer === 'mocap');
   if (what === 'course') void startRound();
   else if (state === 'setup') refresh();
 });
@@ -617,10 +618,10 @@ async function startRound(): Promise<void> {
   $('course-phase').textContent = 'Loading the course';
   const entry = COURSES.find((c) => c.id === settings.course) ?? COURSES[0];
   course = await loadCourse(entry);
-  $('course-name').textContent = entry.file.name;
-  $('course-location').textContent = entry.file.location;
+  $('course-location').textContent = `${entry.file.name} · ${entry.file.location}`;
   view.setCourse({ width: course.width, depth: course.depth, heights: course.heights, codes: course.codes, height: (x, z) => course.terrain.height(x, z) });
   round = new Round(courseFrom(course));
+  view.setGolfer(settings.golfer === 'mocap');
   newShot();
 }
 
