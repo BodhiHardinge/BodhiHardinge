@@ -28,6 +28,7 @@
           <a href="./game.html" aria-current="page">Course</a>
         </nav>
         <div class="masthead-tools">
+          <button type="button" id="open-card" class="masthead-link">Scorecard</button>
           <button type="button" id="open-settings" class="masthead-link">Settings</button>
           <div class="segmented" role="group" aria-label="Units">
             <button type="button" data-units="metric" aria-pressed="true">Metres</button>
@@ -64,10 +65,13 @@
                 <button type="button" data-camera="tee" aria-pressed="true">Behind</button>
                 <button type="button" data-camera="swing" aria-pressed="false">Swing</button>
                 <button type="button" data-camera="follow" aria-pressed="false">Follow</button>
+                <button type="button" data-camera="landing" aria-pressed="false">Landing</button>
+                <button type="button" data-camera="green" aria-pressed="false">Green</button>
                 <button type="button" data-camera="above" aria-pressed="false">Above</button>
               </div>
               <div class="cameras" role="group" aria-label="Layers">
                 <button type="button" id="layer-preview" aria-pressed="true">Perfect line</button>
+                <button type="button" id="layer-green" aria-pressed="false">Green read <kbd>G</kbd></button>
                 <button type="button" id="layer-forces" aria-pressed="false">Forces</button>
                 <label class="speed">
                   <span class="visually-hidden">Playback speed</span>
@@ -83,6 +87,8 @@
             </div>
           </div>
           <div class="pip" id="pip-legend" hidden></div>
+          <div class="green-key" id="green-key" hidden></div>
+          <div class="toast" id="toast" role="status" hidden></div>
 
           <div class="lane" id="lane" hidden>
             <div class="lane-track" id="lane-track"></div>
@@ -91,7 +97,7 @@
           </div>
 
           <div class="result" id="result" hidden></div>
-          <p class="fly-hint" id="fly-hint">Arrow keys play the swing · Drag to orbit · W A S D to fly</p>
+          <p class="fly-hint" id="fly-hint">← → aim your feet · Space swings, then arrow keys play it · 1 to 6 cameras · G green read · Drag to orbit · W A S D to fly</p>
         </section>
 
         <section class="board lower" aria-label="Swing analysis and scorecard">

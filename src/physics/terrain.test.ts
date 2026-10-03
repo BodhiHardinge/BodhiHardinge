@@ -65,3 +65,21 @@ describe('terrain', () => {
     expect(wet.hazard).toBe('water');
   });
 });
+
+describe('shots that start into rising ground', () => {
+  it('a putt up a slope steeper than its launch angle still rolls (it used to freeze)', () => {
+    // 6% uphill: steeper than the 2.9 deg (5.1%) launch, gentle enough for the ball to stop on.
+    const t = new FramedTerrain(plane(0.06, 0, GREEN), { x: 100, z: 100, heading: 0 });
+    const shot = simulateShot({ ballSpeed: 3.8, launchAngle: degrees(2.9), launchDirection: 0, spinRate: 3, spinAxis: 0 }, env, { terrain: t });
+    expect(shot.duration).toBeGreaterThan(0.5);
+    expect(shot.total).toBeGreaterThan(0.5);
+    // Uphill, a 3.8 m/s putt runs out well short of its flat distance.
+    const flat = simulateShot({ ballSpeed: 3.8, launchAngle: degrees(2.9), launchDirection: 0, spinRate: 3, spinAxis: 0 }, env, { terrain: framedFlat() });
+    expect(shot.total).toBeLessThan(flat.total * 0.7);
+    expect(shot.restPosition.x).toBeGreaterThan(0);
+  });
+});
+
+function framedFlat() {
+  return new FramedTerrain(plane(0, 0, GREEN), { x: 100, z: 100, heading: 0 });
+}

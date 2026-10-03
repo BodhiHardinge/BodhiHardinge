@@ -35,6 +35,8 @@ export class Swing {
   readonly start: number;
   /** When the club starts back, after the golfer settles at address, s. */
   readonly backswingStart: number;
+  /** Direction the swing plane faces across the ground, rad from +x toward +z (the path, corrected for the arc). */
+  readonly yaw: number;
   readonly end: number;
   readonly downswing: number;
   private readonly radius: number;
@@ -61,6 +63,7 @@ export class Swing {
 
     // Meeting the ball off the bottom of a tilted arc swings the strike direction; turn the plane to cancel it (D-plane).
     const yaw = delivery.clubPath + Math.atan(Math.tan(this.impactAngle) * Math.cos(incline));
+    this.yaw = yaw;
     // Plane axes: `along` points down the swing direction, `up` climbs the plane toward the golfer.
     this.along = vec3(Math.cos(yaw), 0, Math.sin(yaw));
     const towardGolfer = vec3(Math.sin(yaw), 0, -Math.cos(yaw));

@@ -10,11 +10,13 @@ import { toRpm } from '../physics/units.ts';
 import { vec3, type Vec3 } from '../physics/vec3.ts';
 import { Golfer } from './golfer.ts';
 import { ARROWS, ForcesInset, SPIN_DISPLAY_SLOWDOWN, type ForceSnapshot } from './pip.ts';
-import { buildCourseTerrain, buildCup, buildHole, buildMarkers, buildRange, canvasTexture, type CourseRasters } from './scenery.ts';
+import { buildCup, buildHole, buildMarkers, buildRange, canvasTexture } from './scenery.ts';
+import { TerrainView, type CourseScene } from './terrain-view.ts';
+import { GreenRead } from './green-read.ts';
 import type { Terrain } from '../physics/terrain.ts';
 import { unitFor, type UnitSystem } from './units.ts';
 
-export type CameraMode = 'tee' | 'swing' | 'follow' | 'side' | 'above' | 'free';
+export type CameraMode = 'tee' | 'swing' | 'follow' | 'landing' | 'green' | 'side' | 'above' | 'free';
 
 export interface SceneInput {
   readonly shot: Shot;
@@ -113,10 +115,11 @@ export class CourseView {
   /** Ground, planting and the hole, moved so the current shot frame sits at the origin. */
   private readonly world = new THREE.Group();
   private readonly rangeGroup = new THREE.Group();
-  private courseGroup: THREE.Group | null = null;
-  private course: CourseRasters | null = null;
+  private terrainView: TerrainView | null = null;
+  private course: CourseScene | null = null;
   private readonly options: CourseViewOptions;
   private preview: THREE.Line | null = null;
+  private aimLine: THREE.Line | null = null;
   private readonly keys = new Set<string>();
 
   private input: SceneInput | null = null;
@@ -135,7 +138,10 @@ export class CourseView {
   private showGhost = true;
   private showTour = true;
   private showTrails = false;
-  private readonly followFrom = new THREE.Vector3();
+  /** Where the ball was last frame, for carrying the follow camera along with it. */
+  private readonly followBall = new THREE.Vector3();
+  private readonly greenRead = new GreenRead();
+  private readonly started = performance.now();
 
   constructor(canvas: HTMLCanvasElement, container: HTMLElement, legend: HTMLElement, options: CourseViewOptions = {}) {
     this.options = options;
@@ -182,12 +188,8 @@ export class CourseView {
     this.controls.maxPolarAngle = Math.PI / 2 - 0.02;
     this.controls.minDistance = 0.5;
     this.controls.maxDistance = 900;
-    this.controls.addEventListener('start', () => {
-      if (this.mode !== 'free') {
-        this.mode = 'free';
-        this.onCameraChange('free');
-      }
-    });
+    // Dragging or zooming adjusts the current camera without leaving it: Follow keeps following, and the next shot
+    // reframes the chosen view. Only W A S D switch to free flight.
     this.controls.addEventListener('change', () => this.requestRender());
 
     new ResizeObserver(() => this.resize()).observe(container);
@@ -236,22 +238,41 @@ export class CourseView {
   }
 
   /** Replaces the driving range with a real course's terrain. */
-  setCourse(course: CourseRasters): void {
-    if (this.courseGroup) {
-      this.world.remove(this.courseGroup);
-      this.courseGroup.traverse((o) => {
-        if (o instanceof THREE.Mesh) o.geometry.dispose();
-      });
+  setCourse(course: CourseScene): void {
+    if (this.terrainView) {
+      this.world.remove(this.terrainView.group);
+      this.terrainView.dispose();
     }
     this.course = course;
     this.holeKey = '';
-    this.courseGroup = buildCourseTerrain(course);
-    this.world.add(this.courseGroup);
+    this.terrainView = new TerrainView(course);
+    this.world.add(this.terrainView.group, this.greenRead.group);
     this.rangeGroup.visible = false;
-    this.scene.fog = new THREE.Fog('#dbe7ea', 400, 2600);
+    this.scene.fog = new THREE.Fog('#dbe7ea', 500, 3000);
     this.camera.far = 6000;
+    this.camera.near = 0.05;
     this.camera.updateProjectionMatrix();
     this.controls.maxDistance = 2500;
+  }
+
+  /** Full terrain detail around a region of the course (world coordinates), e.g. the hole being played. */
+  focusCourse(x0: number, z0: number, x1: number, z1: number): void {
+    this.terrainView?.focus(x0, z0, x1, z1);
+    this.requestRender();
+  }
+
+  /**
+   * Green reading: contours and flowing slope arrows for one green (outline in world coordinates). Pass null to
+   * hide it.
+   */
+  setGreenRead(green: readonly (readonly [number, number])[] | null): void {
+    if (green && this.course) {
+      this.greenRead.build(green, (x, z) => this.course!.height(x, z));
+      this.greenRead.group.visible = true;
+    } else {
+      this.greenRead.group.visible = false;
+    }
+    this.requestRender();
   }
 
   /** Ground height in the current shot frame, or 0 on the range. */
@@ -294,11 +315,15 @@ export class CourseView {
     this.tourTracer = this.replaceTracer(this.tourTracer, input.tour, '#3d6fd1', 0.85);
     this.buildTrails(input.trails);
     this.buildDispersion(input.dispersion);
-    this.landing.position.set(input.shot.flight.landingPosition.x, 0.03, input.shot.flight.landingPosition.z);
+    const landed = input.shot.flight.landingPosition;
+    this.landing.position.set(landed.x, landed.y + 0.03, landed.z);
+    // Lie flat on sloping ground.
+    const n = input.terrain ? input.terrain.normal(landed.x, landed.z) : { x: 0, y: 1, z: 0 };
+    this.landing.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(n.x, n.y, n.z));
     this.playing = false;
     this.clock = input.atAddress ? input.swing.start : this.endTime();
     this.showAt(this.clock, 0);
-    this.frameCamera(true);
+    this.frameCamera();
   }
 
   // A holed ball gets a moment to drop to the bottom of the cup.
@@ -311,13 +336,17 @@ export class CourseView {
   hit(): void {
     if (!this.input) return;
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      this.showAt(this.endTime(), 0);
+      // No animation: show where the ball finished, and still tell the game the shot is over.
+      this.clock = this.endTime();
+      this.showAt(this.clock, 0);
+      this.frameCamera();
+      this.onFinish();
       return;
     }
     this.playing = true;
     this.clock = this.input.swing.start;
     this.lastFrame = performance.now();
-    this.frameCamera(true);
+    this.frameCamera();
     this.requestRender();
   }
 
@@ -327,7 +356,7 @@ export class CourseView {
     this.playing = false;
     this.clock = this.endTime();
     this.showAt(this.clock, 0);
-    this.frameCamera(true);
+    this.frameCamera();
     this.onFinish();
   }
 
@@ -344,7 +373,7 @@ export class CourseView {
   /** Changes the camera without touching playback. */
   setCamera(mode: CameraMode): void {
     this.mode = mode;
-    this.frameCamera(true);
+    this.frameCamera();
   }
 
   setLayers(forces: boolean, ghost: boolean, tour: boolean, trails: boolean): void {
@@ -383,11 +412,13 @@ export class CourseView {
       this.clock = Math.min(end, this.clock + dt);
       if (this.clock >= end) this.playing = false;
       this.showAt(this.clock, dt);
+      if (this.mode === 'follow') this.carryFollow();
       if (!this.playing) this.onFinish();
-      if (this.mode === 'follow') this.frameCamera(false);
     }
+    const flowing = this.greenRead.active;
+    if (flowing) this.greenRead.update((now - this.started) / 1000);
     this.draw();
-    if (this.playing || this.keys.size > 0) this.requestRender();
+    if (this.playing || this.keys.size > 0 || flowing) this.requestRender();
   }
 
   private draw(): void {
@@ -430,9 +461,14 @@ export class CourseView {
       points.push(toThree(shot.positionAt(t)).setY(shot.positionAt(t).y + BALL_RADIUS));
     }
     times.push(shot.duration);
-    points.push(toThree(shot.restPosition).setY(BALL_RADIUS));
+    points.push(toThree(shot.restPosition).setY(shot.restPosition.y + BALL_RADIUS));
+    // A shot that barely moves still needs two points to draw.
+    while (points.length < 2) {
+      times.push(times[times.length - 1]);
+      points.push(points[points.length - 1].clone());
+    }
     const end = times.findIndex((t) => t >= shot.flight.flightTime);
-    const flightSamples = Math.max(2, end === -1 ? times.length : end + 1);
+    const flightSamples = Math.min(points.length, Math.max(2, end === -1 ? times.length : end + 1));
     const arc = [0];
     for (let i = 1; i < flightSamples; i++) arc.push(arc[i - 1] + points[i].distanceTo(points[i - 1]));
 
@@ -446,7 +482,7 @@ export class CourseView {
       this.scene.add(mesh);
     }
     const ground = new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints(points.slice(flightSamples - 1).map((p) => p.clone().setY(Math.max(p.y, 0.05)))),
+      new THREE.BufferGeometry().setFromPoints(points.slice(flightSamples - 1).map((p) => p.clone().setY(p.y - BALL_RADIUS + 0.03))),
       new THREE.LineBasicMaterial({ color: colour === '#f4d35e' ? '#ffffff' : colour, transparent: true, opacity: 0.85 * opacity }),
     );
     this.scene.add(ground);
@@ -479,16 +515,41 @@ export class CourseView {
     const points: THREE.Vector3[] = [];
     for (let t = 0; t <= shot.duration; t += 1 / 30) {
       const p = shot.positionAt(t);
-      points.push(new THREE.Vector3(p.x, Math.max(p.y, 0) + 0.06, p.z));
+      points.push(new THREE.Vector3(p.x, p.y + 0.06, p.z));
     }
     const rest = shot.restPosition;
-    points.push(new THREE.Vector3(rest.x, 0.06, rest.z));
+    points.push(new THREE.Vector3(rest.x, rest.y + 0.06, rest.z));
     this.preview = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints(points),
       new THREE.LineDashedMaterial({ color: '#ffffff', dashSize: 1.2, gapSize: 1.0, transparent: true, opacity: 0.6, toneMapped: false }),
     );
     this.preview.computeLineDistances();
     this.scene.add(this.preview);
+    this.requestRender();
+  }
+
+  /**
+   * The aim line: where the feet point, drawn along the ground from the ball (angle in the shot frame, rad, + right).
+   * Pass null to hide it.
+   */
+  setAim(angle: number | null, length = 60): void {
+    if (this.aimLine) {
+      this.scene.remove(this.aimLine);
+      this.aimLine.geometry.dispose();
+      this.aimLine = null;
+    }
+    if (angle === null) return;
+    const c = Math.cos(angle);
+    const sn = Math.sin(angle);
+    const points: THREE.Vector3[] = [];
+    for (let d = 0.4; d <= length; d += 1) points.push(new THREE.Vector3(d * c, this.groundAt(d * c, d * sn) + 0.04, d * sn));
+    // A short bar across the line where the feet are.
+    this.aimLine = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(points),
+      new THREE.LineDashedMaterial({ color: '#f4d35e', dashSize: 0.6, gapSize: 0.4, toneMapped: false }),
+    );
+    this.aimLine.computeLineDistances();
+    this.scene.add(this.aimLine);
     this.requestRender();
   }
 
@@ -508,7 +569,7 @@ export class CourseView {
       const points: THREE.Vector3[] = [];
       for (let t = 0; t <= shot.duration; t += 0.05) {
         const p = shot.positionAt(t);
-        points.push(new THREE.Vector3(p.x, Math.max(p.y, 0) + 0.05, p.z));
+        points.push(new THREE.Vector3(p.x, p.y + 0.05, p.z));
       }
       this.trailGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), material));
     }
@@ -546,7 +607,8 @@ export class CourseView {
     this.revealTracer(this.tracer, t, true);
     this.revealTracer(this.ghostTracer, t, this.showGhost);
     this.revealTracer(this.tourTracer, t, this.showTour);
-    this.landing.visible = shot.flight.landed && t >= shot.flight.flightTime;
+    // Putts and little hops have no landing worth marking.
+    this.landing.visible = shot.flight.landed && shot.flight.carry > 3 && t >= shot.flight.flightTime;
 
     this.setPhase(this.phaseAt(t));
     if (this.showForces) {
@@ -582,7 +644,7 @@ export class CourseView {
     const weight = vec3(0, -mass * STANDARD_GRAVITY, 0);
     const support = vec3(0, mass * STANDARD_GRAVITY, 0);
     if (t < 0) {
-      return { velocity: vec3(0, 0, 0), spin: vec3(0, 0, 0), gravity: weight, normal: support, details: [['Status', 'On the tee']] };
+      return { velocity: vec3(0, 0, 0), spin: vec3(0, 0, 0), gravity: weight, normal: support, details: [['Status', 'At address']] };
     }
     const state = shot.airStateAt(t);
     const impact = this.impacts.find((ti) => t >= ti && t < ti + IMPULSE_WINDOW);
@@ -641,7 +703,18 @@ export class CourseView {
     this.legend.innerHTML = `<h3>Forces on the ball</h3><ul class="pip-keys">${rows}</ul><ul class="pip-values">${details}</ul><p>Spin shown ${SPIN_DISPLAY_SLOWDOWN}x slower</p>`;
   }
 
-  private frameCamera(jump: boolean): void {
+  // Carries the follow camera along with the ball, preserving the angle and distance the player has set.
+  private carryFollow(): void {
+    const delta = this.ball.position.clone().sub(this.followBall);
+    this.followBall.copy(this.ball.position);
+    this.camera.position.add(delta);
+    this.controls.target.add(delta);
+    const floor = this.groundAt(this.camera.position.x, this.camera.position.z) + 1.2;
+    if (this.camera.position.y < floor) this.camera.position.y = floor;
+    this.controls.update();
+  }
+
+  private frameCamera(): void {
     const input = this.input;
     if (!input) return;
     const { shot } = input;
@@ -671,16 +744,40 @@ export class CourseView {
         target.set(reach * 0.58, 0, rest.z * 0.5);
         break;
       case 'follow': {
+        // Start behind the ball looking down the line; from then on the camera travels with the ball, keeping any
+        // angle the player drags it to.
         const ball = this.ball.position;
         const ahead = this.clock < 0 ? new THREE.Vector3(30, 0, 0) : toThree(shot.positionAt(Math.min(shot.duration, this.clock + 0.4)));
         const direction = new THREE.Vector3(ahead.x - ball.x, 0, ahead.z - ball.z);
         if (direction.lengthSq() < 1e-6) direction.set(1, 0, 0);
         direction.normalize();
-        const desired = ball.clone().addScaledVector(direction, -10).add(new THREE.Vector3(0, 3, 0));
-        if (jump) this.followFrom.copy(desired);
-        else this.followFrom.lerp(desired, 0.08);
-        position.copy(this.followFrom);
+        position.copy(ball).addScaledVector(direction, -10).add(new THREE.Vector3(0, 3, 0));
         target.copy(ball).addScaledVector(direction, 20);
+        this.followBall.copy(ball);
+        break;
+      }
+      case 'landing': {
+        // Beside where the ball comes down, looking at the landing spot.
+        const land = toThree(shot.flight.landingPosition);
+        const u = new THREE.Vector3(land.x, 0, land.z);
+        if (u.lengthSq() < 1) u.set(1, 0, 0);
+        u.normalize();
+        const side = new THREE.Vector3(-u.z, 0, u.x);
+        const far = Math.max(8, Math.min(30, shot.flight.carry * 0.08));
+        position.copy(land).addScaledVector(side, far).addScaledVector(u, -far * 0.4).setY(land.y + far * 0.35 + 1.5);
+        target.copy(land).addScaledVector(u, 3);
+        break;
+      }
+      case 'green': {
+        // From beyond the flag looking back down the line of the shot, to read the green.
+        const p = new THREE.Vector3(pin.x, input.terrain ? input.terrain.height(pin.x, pin.z) : 0, pin.z);
+        const u = new THREE.Vector3(pin.x, 0, pin.z);
+        const toPin = u.length();
+        if (toPin < 1) u.set(1, 0, 0);
+        u.normalize();
+        const side = new THREE.Vector3(-u.z, 0, u.x);
+        position.copy(p).addScaledVector(u, 14).addScaledVector(side, 5).setY(p.y + 6);
+        target.copy(toPin < 40 ? p.clone().multiplyScalar(0.5) : p);
         break;
       }
       case 'free':

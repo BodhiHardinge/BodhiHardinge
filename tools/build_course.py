@@ -191,6 +191,7 @@ if cfg.get('debug'):
 
 # ---------------------------------------------------------------- Routing order with the scorecard's par 3s
 pars = cfg['pars']
+card = cfg.get('card_lengths')
 cand = []
 for hi in matched:
     h = holes[hi]
@@ -207,20 +208,27 @@ for hi in matched:
     line = LineString(path).simplify(8)
     length = line.length
     par3 = h['par3'] or length < cfg.get('par3_max', 230)
-    cand.append(dict(hi=hi, tees=tee_pts, path=line, length=length, par3=par3))
+    cand.append(dict(hi=hi, tees=tee_pts, path=line, length=length, par3=par3, synthetic=hi in synthetic))
 
 n = len(cand)
-print('candidates', [(c['hi'], 'p3' if c['par3'] else '', round(c['length'])) for c in cand])
+print('candidates', [(c['hi'], 'p3' if c['par3'] else '', round(c['length']), 'S' if c['synthetic'] else '') for c in cand])
 want = len(pars)
 start_xy = [np.array(c['tees'][0].coords[0]) for c in cand]
 end_xy = [np.array(c['path'].coords[-1]) for c in cand]
 walk = np.array([[np.linalg.norm(end_xy[i] - start_xy[j]) for j in range(n)] for i in range(n)])
-# DP over (visited set, last hole); position k must match the scorecard's par-3-ness.
-# A hole whose shape disagrees with the card's par 3s costs as much as a long walk, so the card wins when it can.
+# DP over (visited set, last hole). Disagreeing with the card's par 3s costs as much as a long walk; so does a
+# length far from the card's (stand-in tees can still move back, so they are only charged for being too long).
 MISMATCH = cfg.get('par_mismatch_cost', 600)
+def fit_cost(c, k):
+    cost = 0.0 if c['par3'] == (pars[k] == 3) else MISMATCH
+    if card:
+        diff = c['length'] - card[k]
+        if c['synthetic']: cost += 2 * max(0, diff - 40)
+        else: cost += 2 * max(0, abs(diff) - 40)
+    return cost
 layer = {}
 for i, c in enumerate(cand):
-    layer[(1 << i, i)] = (0.0 if c['par3'] == (pars[0] == 3) else MISMATCH, None)
+    layer[(1 << i, i)] = (fit_cost(c, 0), None)
 layers = [layer]
 for k in range(1, want):
     nxt = {}
@@ -228,11 +236,11 @@ for k in range(1, want):
         for j, c in enumerate(cand):
             if mask >> j & 1: continue
             key = (mask | 1 << j, j)
-            v = cost + walk[last, j] + (0 if c['par3'] == (pars[k] == 3) else MISMATCH)
+            v = cost + walk[last, j] + fit_cost(c, k)
             if key not in nxt or v < nxt[key][0]: nxt[key] = (v, (mask, last))
     # Keep the search small: the cheapest partial routes.
     layers.append(dict(sorted(nxt.items(), key=lambda kv: kv[1][0])[:30000]))
-if not layers[-1]: sys.exit('no routing matches the scorecard par 3s')
+if not layers[-1]: sys.exit('no routing found')
 key = min(layers[-1], key=lambda k: layers[-1][k][0])
 cost = layers[-1][key][0]
 order = []
@@ -240,74 +248,151 @@ for k in range(want - 1, -1, -1):
     order.append(key[1])
     key = layers[k][key][1]
 order.reverse()
-print('route walking total m', round(cost), 'order', order)
+print('route cost', round(cost), 'order', order)
+
+# Stand-in tees move back along the line of the hole until the hole plays its card length, staying on the course.
+if card:
+    for k, ci in enumerate(order):
+        c = cand[ci]
+        if not c['synthetic'] or c['length'] >= card[k] - 5: continue
+        coords = list(c['path'].coords)
+        a, b = np.array(coords[0]), np.array(coords[1])
+        u = (a - b) / (np.linalg.norm(a - b) or 1)
+        need = card[k] - c['length']
+        step = 0
+        while step < need and course_poly.buffer(-8).contains(Point(*(a + u * (step + 5)))): step += 5
+        new = a + u * step
+        c['tees'] = [Point(*new)] + c['tees']
+        c['path'] = LineString([tuple(new)] + coords[1:])
+        c['length'] = c['path'].length
 
 # ---------------------------------------------------------------- Rasters
 x0, y0, x1, y1 = course_poly.buffer(cfg.get('margin', 60)).bounds
 x0, y0 = max(0, int(x0)), max(0, int(y0)); x1, y1 = min(W, int(x1)), min(H, int(y1))
 w, h = x1 - x0, y1 - y0
+# World coordinates: x east from the west edge, z south from the north edge, metres. Height cell (row r, col i)
+# covers x in [i, i+1) and z in [r, r+1).
+def wx(x): return x - x0
+def wz(y): return y1 - y
 
 SURF = {'out': 0, 'thick': 1, 'rough': 2, 'fairway': 3, 'fringe': 4, 'green': 5, 'tee': 6, 'sand': 7, 'water': 8}
-img = Image.new('L', (w, h), SURF['out'])
-draw = ImageDraw.Draw(img)
-def paint(geom, code):
-    for p in getattr(geom, 'geoms', [geom]):
-        if p.geom_type != 'Polygon' or p.is_empty: continue
-        # Image rows run north to south.
-        draw.polygon([(x - x0, (y1 - 1) - y) for x, y in p.exterior.coords], fill=code)
-        for hole in p.interiors:
-            draw.polygon([(x - x0, (y1 - 1) - y) for x, y in hole.coords], fill=SURF['rough'])
-paint(course_poly, SURF['thick'])
-paint(unary_union([*fairways, *greens, *[t for g in tee_groups for t in g]]).buffer(cfg.get('rough_width', 22)).intersection(course_poly.buffer(10)), SURF['rough'])
-for f in fairways: paint(f, SURF['fairway'])
-for g in tee_groups:
-    for t in g: paint(t, SURF['tee'])
-for g in greens: paint(g.buffer(1.5), SURF['fringe'])
-for g in greens: paint(g, SURF['green'])
-for b in bunkers: paint(b, SURF['sand'])
-for wtr in water: paint(wtr, SURF['water'])
-img.save(cfg['out'] + '/surfaces.png', optimize=True)
+SCALE = cfg.get('surface_scale', 2)  # pixels per metre in the physics raster
+rough_area = unary_union([*fairways, *greens, *[t for g in tee_groups for t in g]]).buffer(cfg.get('rough_width', 22)).intersection(course_poly.buffer(10))
+all_tees = [t for g in tee_groups for t in g]
+layers_out = [
+    ('thick', [course_poly]), ('rough', [rough_area]), ('fairway', fairways), ('tee', all_tees),
+    ('fringe', [g.buffer(1.5) for g in greens]), ('green', greens), ('sand', bunkers), ('water', water),
+]
+def raster(scale):
+    img = Image.new('L', (w * scale, h * scale), SURF['out'])
+    draw = ImageDraw.Draw(img)
+    for name, geoms in layers_out:
+        for geom in geoms:
+            for poly in getattr(geom, 'geoms', [geom]):
+                if poly.geom_type != 'Polygon' or poly.is_empty: continue
+                draw.polygon([(wx(x) * scale, wz(y) * scale) for x, y in poly.exterior.coords], fill=SURF[name])
+                for ring in poly.interiors:
+                    draw.polygon([(wx(x) * scale, wz(y) * scale) for x, y in ring.coords], fill=SURF['rough'] if name == 'fairway' else SURF['thick'])
+    return img
+raster(SCALE).save(cfg['out'] + '/surfaces.png', optimize=True)
+green_mask = np.asarray(raster(1)) >= SURF['fringe']
+green_mask &= np.isin(np.asarray(raster(1)), [SURF['fringe'], SURF['green']])
 
 heights = grid[y0:y1, x0:x1][::-1]  # north-up rows
+counts = dem['count'][y0:y1, x0:x1][::-1] if 'count' in dem.files else np.isfinite(heights).astype(float)
 mask = np.isfinite(heights)
 idx = ndimage.distance_transform_edt(~mask, return_distances=False, return_indices=True)
 filled = heights[tuple(idx)]
 filled = np.where(mask, filled, ndimage.gaussian_filter(filled, 3))
-if cfg.get('smooth'): filled = ndimage.gaussian_filter(filled, cfg['smooth'])
-v = filled + 32768
-r = np.floor(v / 256); gch = np.floor(v - r * 256); b = np.round((v - r * 256 - gch) * 256)
-gch = gch + (b >= 256); b = np.where(b >= 256, 0, b)
-Image.fromarray(np.dstack([r, gch, b]).astype(np.uint8), 'RGB').save(cfg['out'] + '/heights.png', optimize=True)
+base = ndimage.gaussian_filter(filled, cfg['smooth']) if cfg.get('smooth') else filled
+
+sys.path.insert(0, __import__('os').path.dirname(__file__))
+from terrain_fit import local_quadratic, blend, planar_greens
+labels, count_labels = ndimage.label(ndimage.binary_dilation(green_mask, iterations=4))
+fitted = base.copy()
+if cfg.get('green_fit') == 'quadratic':
+    sigma = cfg.get('green_sigma', 1.8)
+    r = int(np.ceil(3 * sigma)) + 2
+    for k, sl in enumerate(ndimage.find_objects(labels), start=1):
+        rs = slice(max(0, sl[0].start - r), min(h, sl[0].stop + r))
+        cs = slice(max(0, sl[1].start - r), min(w, sl[1].stop + r))
+        local = local_quadratic(filled[rs, cs], np.where(mask[rs, cs], counts[rs, cs], 0.05), sigma)
+        m = labels[rs, cs] == k
+        fitted[rs, cs][m] = local[m]
+    final = blend(base, fitted, labels > 0, 3)
+elif cfg.get('green_fit') == 'planar':
+    flat = planar_greens(base, ndimage.label(green_mask)[0], cfg.get('green_max_slope', 0.02))
+    final = blend(base, flat, green_mask, cfg.get('green_blend', 8))
+else:
+    final = base
+gy_, gx_ = np.gradient(final)
+sl = np.hypot(gx_, gy_)[green_mask & (np.asarray(raster(1)) == SURF['green'])] * 100
+print('green slopes: median %.1f%%, p90 %.1f%%, p99 %.1f%%, over 7%%: %.1f%% of green' % (np.median(sl), np.percentile(sl, 90), np.percentile(sl, 99), (sl > 7).mean() * 100))
+v = final + 32768
+rr = np.floor(v / 256); gch = np.floor(v - rr * 256); bb = np.round((v - rr * 256 - gch) * 256)
+gch = gch + (bb >= 256); bb = np.where(bb >= 256, 0, bb)
+Image.fromarray(np.dstack([rr, gch, bb]).astype(np.uint8), 'RGB').save(cfg['out'] + '/heights.png', optimize=True)
 
 # ---------------------------------------------------------------- Course file (world: x east, z south, metres)
-def world(p): return [round(p[0] - x0, 2), round((y1 - 1) - p[1], 2)]
+def world(p): return [round(wx(p[0]), 2), round(wz(p[1]), 2)]
+def rings(geom, tol=0.15):
+    out = []
+    for poly in getattr(geom, 'geoms', [geom]):
+        if poly.geom_type != 'Polygon' or poly.is_empty: continue
+        poly = poly.simplify(tol)
+        out.append([[[round(wx(x), 2), round(wz(y), 2)] for x, y in ring.coords] for ring in [poly.exterior, *poly.interiors]])
+    return out
 def pin_for(g, k):
+    """A cup position on the green: kept 4 m from the edge, on ground no steeper than 2.5% (as greenkeepers do)."""
     inner = g.buffer(-4)
     if inner.is_empty: inner = g.buffer(-1.5)
     c = inner.centroid
     bx0, by0, bx1, by1 = inner.bounds
-    ang = k * 2.39996
-    for scale in (0.35, 0.2, 0.0):
-        p = Point(c.x + math.cos(ang) * (bx1 - bx0) * scale, c.y + math.sin(ang) * (by1 - by0) * scale)
-        if inner.contains(p): return p
-    return c
+    best, best_slope = c, 1e9
+    rng = np.random.default_rng(k)
+    for _ in range(300):
+        p = Point(rng.uniform(bx0, bx1), rng.uniform(by0, by1))
+        if not inner.contains(p): continue
+        col, row = int(wx(p.x)), int(wz(p.y))
+        if not (1 <= row < h - 1 and 1 <= col < w - 1): continue
+        sx = (final[row, col + 1] - final[row, col - 1]) / 2
+        sy = (final[row + 1, col] - final[row - 1, col]) / 2
+        slope = math.hypot(sx, sy)
+        # Prefer gentle ground, then variety: a different part of the green on each hole.
+        score = max(0, slope - 0.025) * 1000 + (0 if slope <= 0.025 else 1) + rng.uniform(0, 0.5)
+        if score < best_slope: best, best_slope = p, score
+    return best
 out_holes = []
 for num, ci in enumerate(order, start=1):
     c = cand[ci]
     g = holes[c['hi']]['green']
+    # Where the map's hole plainly disagrees with the card (a 140 m "par 4"), trust the map and say so.
+    par = pars[num - 1]
+    par_from_map = False
+    if c['length'] < cfg.get('par3_max', 230) and par != 3: par, par_from_map = 3, True
     out_holes.append(dict(
-        number=num, par=pars[num - 1], length=round(c['length'], 1),
+        number=num, par=par, parFromMap=par_from_map, length=round(c['length'], 1),
         tees=[world(t.coords[0]) for t in c['tees']],
         path=[world(p) for p in c['path'].coords],
         pin=world(pin_for(g, num).coords[0]),
-        green=[world(p) for p in g.exterior.coords],
+        green=[world(p) for p in g.simplify(0.15).exterior.coords],
+        standInTee=bool(c['synthetic']),
     ))
+feature_out = {
+    'boundary': rings(course_poly, 0.5),
+    'rough': rings(rough_area, 0.5),
+    'fairway': [r for f in fairways for r in rings(f)],
+    'tee': [r for t in all_tees for r in rings(t)],
+    'green': [r for g in greens for r in rings(g)],
+    'sand': [r for b in bunkers for r in rings(b)],
+    'water': [r for wt in water for r in rings(wt)],
+}
 course = dict(
     name=cfg['display_name'], location=cfg['location'], note=cfg['note'],
-    size=[w, h], origin=dict(lon=lon0 + x0 / (math.pi / 180 * R * K), lat=None),
+    size=[w, h], surfaceScale=SCALE,
     heightSource=cfg['height_source'], shapeSource='OpenStreetMap contributors via Overture Maps (ODbL)',
-    surfaces=list(SURF.keys()), holes=out_holes,
+    surfaces=list(SURF.keys()), holes=out_holes, features=feature_out,
 )
-json.dump(course, open(cfg['out'] + '/course.json', 'w'), indent=1)
-for hl in out_holes: print(hl['number'], hl['par'], round(hl['length']), 'm')
+json.dump(course, open(cfg['out'] + '/course.json', 'w'), separators=(',', ':'))
+for hl in out_holes: print(hl['number'], hl['par'], round(hl['length']), 'm', '(stand-in tee)' if hl['standInTee'] else '')
 print('total', round(sum(hl['length'] for hl in out_holes)), 'm; raster', w, 'x', h)

@@ -73,7 +73,8 @@ export function bounce(state: Float64Array, surface: Surface, ball: Ball, ground
 
   // Tangential impulse per unit mass: enough to stop the contact slipping (ball leaves rolling), or full friction.
   const normalImpulse = (1 + e) * -vn;
-  const scale = slip <= 3.5 * surface.friction * normalImpulse ? 2 / 7 : (surface.friction * normalImpulse) / Math.max(slip, 1e-12);
+  const mu = surface.slipSoftening ? surface.friction / (1 + slip / surface.slipSoftening) : surface.friction;
+  const scale = slip <= 3.5 * mu * normalImpulse ? 2 / 7 : (mu * normalImpulse) / Math.max(slip, 1e-12);
   const jx = -scale * ux;
   const jy = -scale * uy;
   const jz = -scale * uz;
@@ -229,8 +230,11 @@ export function simulateShot(launch: LaunchConditions, env: Environment, options
   let end = flight.trajectory.stateAt(flight.flightTime);
   const at = (state: ArrayLike<number>) => vec3(state[0], state[1], state[2]);
 
-  if (!flight.landed || flight.carry === 0) return new Shot(flight, bounces, segments, flight.landingPosition);
-  if (hole && dropsIn(Math.hypot(end[0] - hole.pin.x, end[2] - hole.pin.z), 0)) {
+  // A ball struck into rising ground (a putt up a slope steeper than its launch) touches down at once: it goes
+  // straight to the bounce and roll below rather than counting as a shot that never left.
+  const startsOnGround = flight.landed && flight.flightTime === 0;
+  if (!flight.landed || (flight.carry === 0 && !startsOnGround)) return new Shot(flight, bounces, segments, flight.landingPosition);
+  if (!startsOnGround && hole && dropsIn(Math.hypot(end[0] - hole.pin.x, end[2] - hole.pin.z), 0)) {
     return new Shot(flight, bounces, segments, vec3(hole.pin.x, end[1], hole.pin.z), true);
   }
 
@@ -309,8 +313,9 @@ function roll(state: Float64Array, terrain: Terrain, ball: Ball, start: number, 
 
   // Sliding: friction acts against the slip of the contact point until it reaches the 2/7 rolling condition.
   const surface0 = terrain.surface(x, z);
-  const ux = vx + radius * state[8];
-  const uz = vz - radius * state[6];
+  const keep = surface0.spinRetention ?? 1;
+  const ux = vx + radius * state[8] * keep;
+  const uz = vz - radius * state[6] * keep;
   const slip = Math.hypot(ux, uz);
   if (slip > 1e-6) {
     const duration = (2 * slip) / (7 * surface0.friction * g);

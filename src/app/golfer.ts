@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { ClubSpec } from '../physics/club.ts';
 import type { Swing, SwingPose } from '../physics/swing.ts';
-import { buildClubHead } from './clubhead.ts';
+import { buildClubHead, type ClubHeadModel } from './clubhead.ts';
 import motionData from './data/mocap-swing.json';
 
 const COLOURS = { shirt: '#24375a', trousers: '#c8b386', skin: '#dcae88', cap: '#f5f3ec', shoe: '#f5f3ec', shaft: '#c9ccd1', head: '#2b2f34' };
@@ -52,8 +52,9 @@ export class Golfer {
   private readonly club = new Limb(0.0065, this.materials.shaft);
   private readonly grip = new Limb(0.012, new THREE.MeshLambertMaterial({ color: '#1b1b1b' }));
   private clubHead: THREE.Group = new THREE.Group();
-  /** Distance from the hosel to the middle of the face, along the toe, m. */
-  private faceCentre = 0.04;
+  private headModel: ClubHeadModel | null = null;
+  /** Face normal in the head model's own frame (lofted irons tilt it up). */
+  private modelFace = new THREE.Vector3(0, 0, -1);
   private readonly feet: THREE.Mesh[];
   private motion: Motion | null = MOTION;
   /** Putts keep the captured address posture: the shoulders rock, the body stays still. */
@@ -103,8 +104,10 @@ export class Golfer {
     });
     this.putting = spec.head === 'putter';
     // Less forgiving putters are blades; forgiving ones mallets.
-    this.clubHead = buildClubHead(spec, (spec.forgiveness ?? 0.6) > 1 ? 'blade' : 'mallet');
-    this.faceCentre = spec.head === 'driver' ? 0.067 : spec.head === 'wood' ? 0.055 : spec.head === 'putter' ? 0.06 : 0.04;
+    this.headModel = buildClubHead(spec, (spec.forgiveness ?? 0.6) > 1 ? 'blade' : 'mallet');
+    this.clubHead = this.headModel.group;
+    const loft = spec.head === 'iron' ? spec.loft : 0;
+    this.modelFace = new THREE.Vector3(0, Math.sin(loft), -Math.cos(loft));
     this.group.add(this.clubHead);
   }
 
@@ -179,22 +182,35 @@ export class Golfer {
       foot.lookAt(at.clone().addScaledVector(golferSide, -1).setY(0.035));
     }
 
-    const butt = hands.clone().addScaledVector(shaft, -0.08);
-    this.grip.between(butt, hands.clone().addScaledVector(shaft, 0.2));
-    this.club.between(butt, head);
-
-    // Club head: shaft runs up from it, the face points along the delivered face direction.
-    const up = shaft.clone().negate();
-    const face = v(pose.face);
-    face.addScaledVector(up, -face.dot(up)).normalize();
-    const toe = new THREE.Vector3().crossVectors(up, face).normalize();
-    this.placeHead(head, up, toe, face);
+    this.drawClub(hands, head, shaft, v(pose.face));
   }
 
-  private placeHead(head: THREE.Vector3, up: THREE.Vector3, toe: THREE.Vector3, face: THREE.Vector3): void {
-    this.clubHead.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(toe, up, face.clone().negate()));
-    // The swing model's head point is the middle of the face; the model's origin is the hosel.
-    this.clubHead.position.copy(head).addScaledVector(toe, -this.faceCentre);
+  /**
+   * Places the club head so the shaft runs into its hosel at the club's lie angle and the face points where the swing
+   * says, with the middle of the face exactly at the swing model's head point (where the ball is struck). Two-vector
+   * alignment: the shaft direction is matched exactly, the face as closely as the shaft allows.
+   */
+  private drawClub(hands: THREE.Vector3, head: THREE.Vector3, shaft: THREE.Vector3, faceWorld: THREE.Vector3): void {
+    const model = this.headModel;
+    const butt = hands.clone().addScaledVector(shaft, -0.08);
+    this.grip.between(butt, hands.clone().addScaledVector(shaft, 0.2));
+    if (!model) {
+      this.club.between(butt, head);
+      return;
+    }
+    const basis = (a: THREE.Vector3, b: THREE.Vector3) => {
+      const e1 = a.clone().normalize();
+      const e2 = b.clone().addScaledVector(e1, -b.dot(e1)).normalize();
+      return new THREE.Matrix4().makeBasis(e1, e2, new THREE.Vector3().crossVectors(e1, e2));
+    };
+    const shaftLocal = new THREE.Vector3(-Math.cos(model.lie), Math.sin(model.lie), 0);
+    const local = basis(shaftLocal, this.modelFace);
+    const world = basis(shaft.clone().negate(), faceWorld);
+    const rotation = world.multiply(local.clone().transpose());
+    this.clubHead.quaternion.setFromRotationMatrix(rotation);
+    this.clubHead.position.copy(head).sub(model.faceCentre.clone().applyQuaternion(this.clubHead.quaternion));
+    const hosel = model.hoselTop.clone().applyQuaternion(this.clubHead.quaternion).add(this.clubHead.position);
+    this.club.between(butt, hosel);
   }
 
   /**
@@ -258,14 +274,7 @@ export class Golfer {
       foot.lookAt(toeJoint.clone().setY(foot.position.y));
     }
 
-    const butt = hands.clone().addScaledVector(shaft, -0.08);
-    this.grip.between(butt, hands.clone().addScaledVector(shaft, 0.2));
-    this.club.between(butt, head);
-    const up = shaft.clone().negate();
-    const face = v(pose.face);
-    face.addScaledVector(up, -face.dot(up)).normalize();
-    const toe = new THREE.Vector3().crossVectors(up, face).normalize();
-    this.placeHead(head, up, toe, face);
+    this.drawClub(hands, head, shaft, v(pose.face));
   }
 }
 
@@ -283,6 +292,7 @@ class Motion {
   private readonly data: MotionFile;
   private readonly index: Map<string, number>;
   private fitFor: Swing | null = null;
+  private yaw = 0;
   get addressFrame(): number {
     return this.data.phases.address;
   }
@@ -315,8 +325,10 @@ class Motion {
   /** Scale and shift that put the captured hands where this swing's hands are at impact. */
   fitTo(swing: Swing): { scale: number; dx: number; dz: number } {
     if (this.fitFor === swing) return this.fit;
+    // Turn the recorded golfer to face along this swing (aiming left or right turns the whole body).
+    this.yaw = swing.yaw;
     const hands = swing.poseAt(0).hands;
-    const captured = this.hands(this.data.phases.impact);
+    const captured = this.turned(this.hands(this.data.phases.impact));
     const scale = hands.y / captured.y;
     this.fit = { scale, dx: hands.x - captured.x * scale, dz: hands.z - captured.z * scale };
     this.fitFor = swing;
@@ -344,8 +356,14 @@ class Motion {
     return p.finish;
   }
 
+  private turned(p: THREE.Vector3): THREE.Vector3 {
+    const c = Math.cos(this.yaw);
+    const s = Math.sin(this.yaw);
+    return new THREE.Vector3(p.x * c - p.z * s, p.y, p.x * s + p.z * c);
+  }
+
   joint(frame: number, name: string, fit: { scale: number; dx: number; dz: number }): THREE.Vector3 {
-    const p = this.raw(frame, name);
+    const p = this.turned(this.raw(frame, name));
     return new THREE.Vector3(p.x * fit.scale + fit.dx, p.y * fit.scale, p.z * fit.scale + fit.dz);
   }
 }

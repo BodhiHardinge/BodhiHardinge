@@ -31,22 +31,29 @@ export class FlatTerrain implements Terrain {
 }
 
 /**
- * A height grid with a surface code per cell, both 1 cell per `cell` metres. World x runs along columns (east),
- * z along rows (south). Heights are bilinear between cell centres, so the ground is continuous.
+ * A height grid (1 cell per `cell` metres) with a finer surface-code grid (`codeScale` codes per metre). World x
+ * runs along columns (east), z along rows (south). Heights are bilinear between cell centres, so the ground is
+ * continuous.
  */
 export class GridTerrain implements Terrain {
   readonly width: number;
   readonly depth: number;
   readonly cell: number;
+  readonly codeScale: number;
   private readonly heights: Float32Array;
   private readonly codes: Uint8Array;
+  private readonly codeWidth: number;
+  private readonly codeDepth: number;
 
-  constructor(width: number, depth: number, heights: Float32Array, codes: Uint8Array, cell = 1) {
+  constructor(width: number, depth: number, heights: Float32Array, codes: Uint8Array, cell = 1, codeScale = 1) {
     this.width = width;
     this.depth = depth;
     this.heights = heights;
     this.codes = codes;
     this.cell = cell;
+    this.codeScale = codeScale;
+    this.codeWidth = Math.round((width * cell) * codeScale);
+    this.codeDepth = Math.round((depth * cell) * codeScale);
   }
 
   private at(i: number, j: number): number {
@@ -75,11 +82,16 @@ export class GridTerrain implements Terrain {
     return vec3(-dx / n, 1 / n, -dz / n);
   }
 
+  /** Surface code at a point (see SURFACE_CODES); 0 outside the grid. */
+  code(x: number, z: number): number {
+    const i = Math.floor(x * this.codeScale);
+    const j = Math.floor(z * this.codeScale);
+    if (i < 0 || j < 0 || i >= this.codeWidth || j >= this.codeDepth) return 0;
+    return this.codes[j * this.codeWidth + i];
+  }
+
   surface(x: number, z: number): Surface {
-    const i = Math.floor(x / this.cell);
-    const j = Math.floor(z / this.cell);
-    if (i < 0 || j < 0 || i >= this.width || j >= this.depth) return SURFACE_CODES[0];
-    return SURFACE_CODES[this.codes[j * this.width + i]] ?? SURFACE_CODES[0];
+    return SURFACE_CODES[this.code(x, z)] ?? SURFACE_CODES[0];
   }
 }
 

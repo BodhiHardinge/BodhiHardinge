@@ -65,7 +65,7 @@ export function clubScale(spec: ClubSpec): Partial<Record<SpreadKey, number>> {
   const long = Math.max(0, (32 - loft) / 10);
   const short = Math.max(0, (loft - 40) / 15);
   const k = 1 + 0.25 * long - 0.2 * short;
-  return { face: k, path: k, lowPoint: 1 + 0.3 * long - 0.15 * short, toe: k };
+  return { face: k, path: k, lowPoint: 1 + 0.3 * long - 0.15 * short, depth: 1 + 0.2 * long - 0.15 * short, toe: k };
 }
 
 /** Awkward lies make the low point and strike harder to control. */

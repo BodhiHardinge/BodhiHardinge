@@ -13,8 +13,11 @@ export interface LieGeometry {
   readonly sit: number;
   /** Height of the grass the club must pass through before the ball; 0 for none. */
   readonly grass: number;
-  /** Energy it takes to cut through the grass, J per m of path per m of sole width. */
-  readonly grassWork: number;
+  /**
+   * Share of the club's energy lost per 0.3 m of grass cut through with an iron's sole. Grass drag grows with
+   * speed like a fluid's, so it costs a chip the same share as a full swing (a chip from rough is not a duff).
+   */
+  readonly grassDrag: number;
   /** Spin kept when grass gets between face and ball. */
   readonly grassSpin: number;
   /** Energy to plough through the ground, J/m³. Sand is far softer than turf. */
@@ -23,14 +26,14 @@ export interface LieGeometry {
 }
 
 export const LIE_GEOMETRY: Record<string, LieGeometry> = {
-  Tee: { name: 'Tee', sit: 0.006, grass: 0, grassWork: 0, grassSpin: 1, groundWork: 3e7, ground: 'turf' },
-  Fairway: { name: 'Fairway', sit: 0.006, grass: 0, grassWork: 0, grassSpin: 1, groundWork: 3e7, ground: 'turf' },
-  Fringe: { name: 'Fringe', sit: 0.004, grass: 0, grassWork: 0, grassSpin: 1, groundWork: 3e7, ground: 'turf' },
-  Green: { name: 'Green', sit: 0.002, grass: 0, grassWork: 0, grassSpin: 1, groundWork: 3e7, ground: 'turf' },
-  Rough: { name: 'Rough', sit: 0.012, grass: 0.05, grassWork: 900, grassSpin: 0.55, groundWork: 3e7, ground: 'turf' },
-  'Thick rough': { name: 'Thick rough', sit: 0.015, grass: 0.1, grassWork: 2600, grassSpin: 0.35, groundWork: 3e7, ground: 'turf' },
-  'Native area': { name: 'Native area', sit: 0.01, grass: 0.12, grassWork: 3500, grassSpin: 0.4, groundWork: 3.5e7, ground: 'turf' },
-  Sand: { name: 'Sand', sit: -0.004, grass: 0, grassWork: 0, grassSpin: 1, groundWork: 2.5e6, ground: 'sand' },
+  Tee: { name: 'Tee', sit: 0.006, grass: 0, grassDrag: 0, grassSpin: 1, groundWork: 3e7, ground: 'turf' },
+  Fairway: { name: 'Fairway', sit: 0.006, grass: 0, grassDrag: 0, grassSpin: 1, groundWork: 3e7, ground: 'turf' },
+  Fringe: { name: 'Fringe', sit: 0.004, grass: 0, grassDrag: 0, grassSpin: 1, groundWork: 3e7, ground: 'turf' },
+  Green: { name: 'Green', sit: 0.002, grass: 0, grassDrag: 0, grassSpin: 1, groundWork: 3e7, ground: 'turf' },
+  Rough: { name: 'Rough', sit: 0.012, grass: 0.05, grassDrag: 0.08, grassSpin: 0.55, groundWork: 3e7, ground: 'turf' },
+  'Thick rough': { name: 'Thick rough', sit: 0.015, grass: 0.1, grassDrag: 0.22, grassSpin: 0.35, groundWork: 3e7, ground: 'turf' },
+  'Native area': { name: 'Native area', sit: 0.01, grass: 0.12, grassDrag: 0.3, grassSpin: 0.4, groundWork: 3.5e7, ground: 'turf' },
+  Sand: { name: 'Sand', sit: -0.004, grass: 0, grassDrag: 0, grassSpin: 1, groundWork: 2.5e6, ground: 'sand' },
 };
 
 export function lieGeometry(surfaceName: string): LieGeometry {
@@ -116,9 +119,12 @@ export function contactFor(delivery: Delivery, spec: ClubSpec, plane: number, li
   const sit = teed ? teeHeight(spec) : lie.sit;
   const arcRadius = (ARM_LENGTH + spec.length) / Math.sin(plane);
   const plannedLow = -Math.sin(delivery.attackAngle) * arcRadius;
-  // The arc the player aims for: leading edge at the height that puts the sweet spot on the ball.
+  // The arc the player aims for: leading edge at the height that puts the sweet spot on the ball. On turf a good
+  // player never sends the edge into the ground before the ball for it: off a tight lie a lofted club meets the
+  // ball first, a little low on the face, then takes its divot. In sand, entering behind the ball is the shot.
   const contactAbove = BALL_RADIUS * (1 - Math.sin(Math.max(0, delivery.dynamicLoft)));
-  const target = sit + contactAbove - club.sweetSpot;
+  const sweet = sit + contactAbove - club.sweetSpot;
+  const target = lie.ground === 'turf' ? Math.max(0, sweet) : sweet;
   let lowY = target - (plannedLow * plannedLow) / (2 * arcRadius) - strikeIntent.depth;
   const lowPoint = plannedLow + strikeIntent.lowPointShift;
 
@@ -145,9 +151,11 @@ export function contactFor(delivery: Delivery, spec: ClubSpec, plane: number, li
     if (y < 0) ploughed += -y * dx;
     if (lie.grass > 0 && y < lie.grass) grassPath += dx;
   }
-  const work = ploughed * club.soleWidth * lie.groundWork + grassPath * club.soleWidth * lie.grassWork * (spec.head === 'iron' ? 1 : 2);
   const energy = 0.5 * club.mass * delivery.clubSpeed * delivery.clubSpeed;
-  let speedFactor = Math.sqrt(Math.max(0.03, 1 - work / Math.max(energy, 1e-9)));
+  // Grass takes a share of the energy (wider soles drag more); ploughing ground takes a fixed amount of work.
+  const grassShare = Math.min(0.6, lie.grassDrag * (grassPath / 0.3) * (club.soleWidth / 0.025));
+  const work = ploughed * club.soleWidth * lie.groundWork;
+  let speedFactor = Math.sqrt(Math.max(0.03, (1 - grassShare) - work / Math.max(energy, 1e-9)));
 
   const strikeHeight = sit + contactAbove - edgeAtBall;
   let height = strikeHeight - club.sweetSpot;
@@ -187,7 +195,8 @@ export function contactFor(delivery: Delivery, spec: ClubSpec, plane: number, li
   else if (speedFactor < 0.6) kind = 'Duff';
   else if (speedFactor < 0.85) kind = 'Fat';
   else if (speedFactor < 0.97) kind = 'Heavy';
-  else if (height < -0.009) kind = 'Thin';
+  // Thin: met in the bottom few millimetres of the face, near the leading edge, or well below a wood's sweet spot.
+  else if (strikeHeight < 0.006 || height < -0.014) kind = 'Thin';
   else if (spinFactor < 0.7) kind = 'Flyer';
   else if (lie.ground === 'sand') kind = 'Picked clean';
   else if (Math.hypot(height, strikeIntent.toe) < 0.004) kind = 'Pure';

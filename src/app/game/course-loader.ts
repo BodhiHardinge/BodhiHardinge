@@ -30,6 +30,8 @@ export interface LoadedCourse {
   readonly codes: Uint8Array;
   readonly width: number;
   readonly depth: number;
+  /** Surface codes per metre. */
+  readonly codeScale: number;
 }
 
 async function pixels(url: string): Promise<ImageData> {
@@ -50,10 +52,10 @@ export async function loadCourse(entry: CourseEntry): Promise<LoadedCourse> {
   const width = h.width;
   const depth = h.height;
   const heights = new Float32Array(width * depth);
-  const codes = new Uint8Array(width * depth);
-  for (let i = 0; i < width * depth; i++) {
-    heights[i] = h.data[4 * i] * 256 + h.data[4 * i + 1] + h.data[4 * i + 2] / 256 - 32768;
-    codes[i] = s.data[4 * i];
-  }
-  return { entry, terrain: new GridTerrain(width, depth, heights, codes), heights, codes, width, depth };
+  for (let i = 0; i < width * depth; i++) heights[i] = h.data[4 * i] * 256 + h.data[4 * i + 1] + h.data[4 * i + 2] / 256 - 32768;
+  // The surface raster is finer than the height grid (codes per metre in the course file).
+  const codeScale = Math.round(s.width / width) || 1;
+  const codes = new Uint8Array(s.width * s.height);
+  for (let i = 0; i < codes.length; i++) codes[i] = s.data[4 * i];
+  return { entry, terrain: new GridTerrain(width, depth, heights, codes, 1, codeScale), heights, codes, width, depth, codeScale };
 }

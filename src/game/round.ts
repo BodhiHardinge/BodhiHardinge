@@ -52,6 +52,16 @@ export class Round {
     }
   }
 
+  /** Jumps to any hole (0-based), starting it fresh from the tee. Holes left unfinished stay blank on the card. */
+  goToHole(index: number): void {
+    if (index < 0 || index >= this.course.holes.length) return;
+    this.hole = index;
+    this.ball = this.current.tee;
+    this.strokes = [];
+    this.holed = false;
+    this.scores[index] = null;
+  }
+
   nextHole(): void {
     if (this.hole >= this.course.holes.length - 1) return;
     this.hole += 1;

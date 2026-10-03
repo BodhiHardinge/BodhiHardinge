@@ -26,7 +26,8 @@ describe('club meets ground', () => {
   it('bottoming out early hits it fat; late hits it thin; much later tops it', () => {
     expect(['Fat', 'Duff']).toContain(at(-0.12).kind);
     expect(at(-0.12).contact.speedFactor).toBeLessThan(0.85);
-    expect(at(0.1).kind).toBe('Thin');
+    // 14 cm late lifts the leading edge about 16 mm: the ball meets the bottom of the face.
+    expect(at(0.14).kind).toBe('Thin');
     expect(at(0.3).kind).toBe('Topped');
   });
 
@@ -38,17 +39,30 @@ describe('club meets ground', () => {
     expect(woodContact.contact.speedFactor).toBeLessThan(at(0, 'Rough').contact.speedFactor);
   });
 
-  it('a driver off the deck ploughs turf before the ball unless it is picked clean', () => {
+  it('a driver off the deck is met low on the face, and a few millimetres too deep ploughs turf before the ball', () => {
     const driver = clubFor('Driver');
     const setup = stockSetup(driver);
     const d = deliveryFor(setup, player);
     const teed = contactFor(d, driver, planeOf(setup), lieGeometry('Tee'), true);
     const deck = contactFor(d, driver, planeOf(setup), lieGeometry('Fairway'), false);
     expect(teed.kind).toBe('Pure');
-    expect(deck.contact.speedFactor).toBeLessThan(0.9);
-    const picked = contactFor(d, driver, planeOf(setup), lieGeometry('Fairway'), false, { lowPointShift: 0, depth: -0.008, toe: 0 });
-    expect(picked.contact.speedFactor).toBeGreaterThan(0.97);
-    expect(picked.contact.height).toBeLessThan(-0.005);
+    // Ball first, but the ball sits below the sweet spot.
+    expect(deck.contact.speedFactor).toBeGreaterThan(0.97);
+    expect(deck.contact.height).toBeLessThan(-0.005);
+    // The tee leaves room for error; the turf does not.
+    const deep = { lowPointShift: 0, depth: 0.006, toe: 0 };
+    expect(contactFor(d, driver, planeOf(setup), lieGeometry('Tee'), true, deep).contact.speedFactor).toBeGreaterThan(0.97);
+    expect(contactFor(d, driver, planeOf(setup), lieGeometry('Fairway'), false, deep).contact.speedFactor).toBeLessThan(0.9);
+  });
+
+  it('a wedge off a tight lie is struck ball first, a little low on the face', () => {
+    const sw = clubFor('Sand Wedge');
+    const setup = { ...stockSetup(sw), effort: 0.7 };
+    const r = contactFor(deliveryFor(setup, player), sw, planeOf(setup), lieGeometry('Fairway'), false);
+    expect(r.kind).toBe('Clean');
+    expect(r.contact.speedFactor).toBeCloseTo(1, 3);
+    expect(r.divot!.from).toBeGreaterThan(-0.005);
+    expect(r.contact.height).toBeLessThan(0);
   });
 
   it('in sand, entering behind the ball splashes it out soft; picking it clean flies it full', () => {
@@ -72,5 +86,17 @@ describe('club meets ground', () => {
       return contactFor(deliveryFor(s, player), c, planeOf(s), lieGeometry('Sand'), false, { lowPointShift: -0.05, depth: 0.03, toe: 0 }).lowPointHeight;
     };
     expect(dig(sw)).toBeGreaterThan(dig(pw));
+  });
+});
+
+describe('chips from the rough', () => {
+  it('cost a chip about the same share of speed as a full swing, never a duff on their own', () => {
+    const lw = clubFor('Lob Wedge');
+    const full = stockSetup(lw);
+    const chip = { ...full, effort: 0.3 };
+    const contact = (s: typeof full) => contactFor(deliveryFor(s, player), lw, planeOf(s), lieGeometry('Rough'), false);
+    expect(contact(chip).kind).not.toBe('Duff');
+    expect(Math.abs(contact(chip).contact.speedFactor - contact(full).contact.speedFactor)).toBeLessThan(0.03);
+    expect(contact(chip).contact.speedFactor).toBeGreaterThan(0.85);
   });
 });

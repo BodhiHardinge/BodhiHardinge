@@ -21,8 +21,10 @@ export const RPM = unit('rpm', u.toRpm, u.rpm);
 export const PERCENT = unit('%', (x) => x * 100, (x) => x / 100);
 export const SECONDS = unit('s', identity, identity);
 
+// Club and ball speeds stay in mph in both systems, as launch monitors show them; wind follows the system.
 const IMPERIAL = {
   speed: unit('mph', u.toMph, u.mph),
+  wind: unit('mph', u.toMph, u.mph),
   distance: unit('yd', u.toYards, u.yards),
   height: unit('ft', u.toFeet, u.feet),
   altitude: unit('ft', u.toFeet, u.feet),
@@ -30,7 +32,8 @@ const IMPERIAL = {
 };
 
 const METRIC = {
-  speed: unit('m/s', identity, identity),
+  speed: unit('mph', u.toMph, u.mph),
+  wind: unit('km/h', u.toKmh, u.kmh),
   distance: unit('m', identity, identity),
   height: unit('m', identity, identity),
   altitude: unit('m', identity, identity),

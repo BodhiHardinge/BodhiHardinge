@@ -2,7 +2,7 @@ import { DEFAULT_HANDICAP, SCRATCH_SPREAD, SPREAD_LABELS, spreadFor, type Spread
 import { TIMING_PRESETS, type Difficulty, type TimingSettings, type Windows } from '../../game/timing.ts';
 import { BALLS, DEFAULT_BAG, DRIVERS, IRON_SETS, PUTTERS, WEDGE_GRINDS, type Bag } from '../../game/equipment.ts';
 import { clubFor } from '../../physics/club.ts';
-import { degrees, mph, toDegrees, toMph } from '../../physics/units.ts';
+import { celsius, degrees, kmh, mph, toCelsius, toDegrees, toKmh, toMph } from '../../physics/units.ts';
 import type { UnitSystem } from '../units.ts';
 import { slider } from './slider.ts';
 
@@ -25,7 +25,24 @@ export interface GameSettings {
   golfer: 'mocap' | 'simple';
   showPreview: boolean;
   units: UnitSystem;
+  weather: Weather;
+  /** Show green contours and slope arrows automatically when the ball is on or near the green. */
+  autoGreenRead: boolean;
 }
+
+export interface Weather {
+  /** New random wind each round, or the values below. */
+  random: boolean;
+  /** Wind speed at 10 m, m/s. */
+  speed: number;
+  /** Compass direction the wind blows from, deg: 0 north, 90 east. */
+  from: number;
+  /** Air temperature, K. */
+  temperature: number;
+}
+
+export const COMPASS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+export const compassName = (deg: number) => COMPASS[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16];
 
 const KEY = 'ballflight.game-settings.v2';
 
@@ -42,6 +59,8 @@ export const DEFAULT_GAME_SETTINGS: GameSettings = {
   golfer: 'mocap',
   showPreview: true,
   units: 'metric',
+  weather: { random: true, speed: 4, from: 225, temperature: celsius(22) },
+  autoGreenRead: true,
 };
 
 export function loadSettings(): GameSettings {
@@ -51,7 +70,12 @@ export function loadSettings(): GameSettings {
     if (!raw) return fresh;
     const saved = JSON.parse(raw) as Partial<GameSettings>;
     const difficulty = saved.difficulty && saved.difficulty in TIMING_PRESETS ? saved.difficulty : fresh.difficulty;
-    return { ...fresh, ...saved, difficulty, timing: { ...TIMING_PRESETS[difficulty], ...saved.timing }, bag: { ...DEFAULT_BAG, ...saved.bag } };
+    return {
+      ...fresh, ...saved, difficulty,
+      timing: { ...TIMING_PRESETS[difficulty], ...saved.timing },
+      bag: { ...DEFAULT_BAG, ...saved.bag },
+      weather: { ...fresh.weather, ...saved.weather },
+    };
   } catch {
     return fresh;
   }
@@ -109,10 +133,10 @@ function group(title: string, hint?: string): HTMLElement {
 export class SettingsDialog {
   private readonly dialog: HTMLDialogElement;
   private readonly settings: GameSettings;
-  private readonly onChange: (what: 'course' | 'other') => void;
+  private readonly onChange: (what: 'course' | 'weather' | 'other') => void;
   private readonly courses: readonly { id: string; name: string; note: string }[];
 
-  constructor(dialog: HTMLDialogElement, settings: GameSettings, courses: readonly { id: string; name: string; note: string }[], onChange: (what: 'course' | 'other') => void) {
+  constructor(dialog: HTMLDialogElement, settings: GameSettings, courses: readonly { id: string; name: string; note: string }[], onChange: (what: 'course' | 'weather' | 'other') => void) {
     this.dialog = dialog;
     this.settings = settings;
     this.courses = courses;
@@ -127,7 +151,7 @@ export class SettingsDialog {
     this.dialog.showModal();
   }
 
-  private changed(what: 'course' | 'other' = 'other'): void {
+  private changed(what: 'course' | 'weather' | 'other' = 'other'): void {
     saveSettings(this.settings);
     this.onChange(what);
   }
@@ -270,6 +294,57 @@ export class SettingsDialog {
       ], (v) => { s.golfer = v; this.changed(); }),
     );
 
+    // Weather
+    const metric = s.units === 'metric';
+    const weather = group('Wind and weather', 'Wind is measured 10 m up, as forecasts give it, and is lighter near the ground.');
+    const fixed = document.createElement('div');
+    fixed.className = 'settings-subgroup';
+    const randomToggle = document.createElement('label');
+    randomToggle.className = 'check';
+    randomToggle.innerHTML = `<input type="checkbox" ${s.weather.random ? 'checked' : ''}> New random wind each round`;
+    randomToggle.querySelector('input')!.addEventListener('change', (e) => {
+      s.weather = { ...s.weather, random: (e.target as HTMLInputElement).checked };
+      fixed.hidden = s.weather.random;
+      this.changed('weather');
+    });
+    fixed.hidden = s.weather.random;
+    const fromLabel = document.createElement('span');
+    fromLabel.className = 'hint';
+    const showFrom = () => (fromLabel.textContent = `From the ${compassName(s.weather.from)}`);
+    showFrom();
+    fixed.append(
+      slider({
+        label: 'Wind speed', unit: metric ? 'km/h' : 'mph', min: 0, max: metric ? 60 : 40, step: 1, hardMin: 0, hardMax: metric ? 150 : 95,
+        value: Math.round(metric ? toKmh(s.weather.speed) : toMph(s.weather.speed)),
+        onInput: (v) => { s.weather = { ...s.weather, speed: metric ? kmh(v) : mph(v) }; this.changed('weather'); },
+      }).element,
+      slider({
+        label: 'Wind from', hint: '0 north, 90 east', unit: '°', min: 0, max: 359, step: 1, hardMin: 0, hardMax: 359,
+        value: Math.round(s.weather.from),
+        onInput: (v) => { s.weather = { ...s.weather, from: v }; showFrom(); this.changed('weather'); },
+      }).element,
+      fromLabel,
+    );
+    weather.append(
+      randomToggle,
+      fixed,
+      slider({
+        label: 'Temperature', unit: metric ? '°C' : '°F', min: metric ? 0 : 32, max: metric ? 42 : 108, step: 1, hardMin: metric ? -20 : -4, hardMax: metric ? 50 : 122,
+        value: Math.round(metric ? toCelsius(s.weather.temperature) : (toCelsius(s.weather.temperature) * 9) / 5 + 32),
+        onInput: (v) => { s.weather = { ...s.weather, temperature: celsius(metric ? v : ((v - 32) * 5) / 9) }; this.changed('weather'); },
+      }).element,
+    );
+
+    const greens = group('Greens');
+    const auto = document.createElement('label');
+    auto.className = 'check';
+    auto.innerHTML = `<input type="checkbox" ${s.autoGreenRead ? 'checked' : ''}> Show contours and slope arrows when near the green`;
+    auto.querySelector('input')!.addEventListener('change', (e) => {
+      s.autoGreenRead = (e.target as HTMLInputElement).checked;
+      this.changed();
+    });
+    greens.append(auto);
+
     const reset = document.createElement('button');
     reset.type = 'button';
     reset.className = 'text-button';
@@ -280,7 +355,7 @@ export class SettingsDialog {
       this.build();
     });
 
-    body.append(diff, skill, timing, player, bag, course, reset);
+    body.append(diff, skill, timing, player, bag, course, weather, greens, reset);
     d.append(head, body);
   }
 

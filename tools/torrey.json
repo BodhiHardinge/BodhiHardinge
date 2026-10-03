@@ -27,5 +27,7 @@
   5
  ],
  "out": "data/course-build/course-torrey",
- "smooth": 1.0
+ "smooth": 1.2,
+ "green_fit": "quadratic",
+ "green_sigma": 1.8
 }

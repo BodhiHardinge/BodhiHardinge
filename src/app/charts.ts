@@ -436,7 +436,7 @@ export class FlightChart {
   }
 
   private drawWind(ctx: CanvasRenderingContext2D, theme: Theme, wind: WindIndicator, system: UnitSystem, x: number): void {
-    const speed = unitFor('speed', system);
+    const speed = unitFor('wind', system);
     this.drawTag(ctx, theme, x, `WIND ${speed.fromSI(wind.speed).toFixed(1)} ${speed.label}`, 14);
     // Screen x is downrange and screen y points right of target, so the wind vector maps directly.
     const dx = -Math.cos(wind.from);

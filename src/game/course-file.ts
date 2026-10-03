@@ -12,6 +12,23 @@ export interface CourseFile {
   readonly heightSource: string;
   readonly shapeSource: string;
   readonly holes: readonly CourseFileHole[];
+  /** Surface codes per metre in surfaces.png. */
+  readonly surfaceScale?: number;
+  /** Outlines for painting the course crisply: each feature is a polygon of rings (outer ring, then holes). */
+  readonly features?: CourseFeatures;
+}
+
+export type Ring = readonly XZ[];
+export type FeaturePolygon = readonly Ring[];
+
+export interface CourseFeatures {
+  readonly boundary: readonly FeaturePolygon[];
+  readonly rough: readonly FeaturePolygon[];
+  readonly fairway: readonly FeaturePolygon[];
+  readonly tee: readonly FeaturePolygon[];
+  readonly green: readonly FeaturePolygon[];
+  readonly sand: readonly FeaturePolygon[];
+  readonly water: readonly FeaturePolygon[];
 }
 
 export interface CourseFileHole {
@@ -26,6 +43,10 @@ export interface CourseFileHole {
   readonly pin: XZ;
   /** Green outline. */
   readonly green: readonly XZ[];
+  /** True where the map had no tee and one was placed at the scorecard length. */
+  readonly standInTee?: boolean;
+  /** True where the par comes from the hole's length on the map rather than the scorecard. */
+  readonly parFromMap?: boolean;
 }
 
 export const point = (p: XZ): Point => ({ x: p[0], z: p[1] });

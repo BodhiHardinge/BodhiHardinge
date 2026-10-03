@@ -23,15 +23,15 @@ const DEG = Math.PI / 180;
 
 const CONTROLS: readonly ControlSpec[] = [
   { key: 'ballSpeed', limit: { min: 0.5 }, label: 'Ball speed', section: 'Launch', unit: 'speed',
-    range: { imperial: { min: 20, max: 200, step: 0.5 }, metric: { min: 9, max: 90, step: 0.5 } } },
+    range: { imperial: { min: 20, max: 200, step: 0.5 }, metric: { min: 20, max: 200, step: 0.5 } } },
   { key: 'launchAngle', limit: { min: -89 * DEG, max: 89 * DEG }, label: 'Launch angle', section: 'Launch', unit: DEGREES, range: { min: 0, max: 45, step: 0.1 } },
   { key: 'launchDirection', limit: { min: -89 * DEG, max: 89 * DEG }, label: 'Launch direction', hint: '+ right', section: 'Launch', unit: DEGREES,
     range: { min: -20, max: 20, step: 0.1 } },
   { key: 'spinRate', limit: { min: 0 }, label: 'Spin rate', section: 'Launch', unit: RPM, range: { min: 0, max: 12000, step: 50 } },
   { key: 'spinAxis', limit: { min: -89 * DEG, max: 89 * DEG }, label: 'Spin axis', hint: '+ curves right', section: 'Launch', unit: DEGREES,
     range: { min: -45, max: 45, step: 0.5 } },
-  { key: 'windSpeed', limit: { min: 0 }, label: 'Wind speed', hint: 'at 10 m', section: 'Conditions', unit: 'speed',
-    range: { imperial: { min: 0, max: 40, step: 0.5 }, metric: { min: 0, max: 18, step: 0.5 } } },
+  { key: 'windSpeed', limit: { min: 0 }, label: 'Wind speed', hint: 'at 10 m', section: 'Conditions', unit: 'wind',
+    range: { imperial: { min: 0, max: 40, step: 0.5 }, metric: { min: 0, max: 65, step: 1 } } },
   { key: 'windDirection', label: 'Wind from', hint: '0 head, 90 right', section: 'Conditions', unit: DEGREES,
     range: { min: 0, max: 355, step: 5 } },
   { key: 'altitude', limit: { min: -430, max: 9000 }, label: 'Altitude', section: 'Conditions', unit: 'altitude',
